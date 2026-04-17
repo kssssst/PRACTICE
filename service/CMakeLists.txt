@@ -24,7 +24,7 @@ add_custom_command(
 )
 
 # Service исполняемый файл
-add_executable(TrayService WIN32
+add_executable(TrayService
     src/TrayService.cpp
     "${RPC_OUTPUT_DIR}/TrayService_s.c"
 )

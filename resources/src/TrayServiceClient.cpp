@@ -11,8 +11,8 @@
 #define SERVICE_NAME L"TrayAppService"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// RPC client handle
-static RPC_BINDING_HANDLE g_hBinding = NULL;
+// RPC client handle - will be used as implicit handle
+handle_t hBinding = NULL;
 
 // Initialize RPC client
 int InitializeRPCClient()
@@ -20,13 +20,13 @@ int InitializeRPCClient()
     RPC_STATUS status;
     RPC_WSTR pszStringBinding = NULL;
 
-    status = RpcStringBindingComposeW(NULL, L"ncalrpc", NULL,
+    status = RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL,
                                        (RPC_WSTR)ALPC_ENDPOINT, NULL, &pszStringBinding);
     if (status) {
         return -1;
     }
 
-    status = RpcBindingFromStringBindingW(pszStringBinding, &g_hBinding);
+    status = RpcBindingFromStringBindingW(pszStringBinding, &hBinding);
     RpcStringFreeW(&pszStringBinding);
 
     if (status) {
@@ -39,29 +39,27 @@ int InitializeRPCClient()
 // Stop service via RPC
 int StopServiceViaRPC()
 {
-    if (!g_hBinding) {
+    if (!hBinding) {
         if (InitializeRPCClient() != 0) {
             return -1;
         }
     }
 
-    error_status_t rpcStatus = RPC_S_OK;
-    
     __try {
-        rpcStatus = StopService();
+        StopService();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        rpcStatus = RpcExceptionCode();
+        return -1;
     }
 
-    return rpcStatus == RPC_S_OK ? 0 : -1;
+    return 0;
 }
 
 // Cleanup RPC client
 void CleanupRPCClient()
 {
-    if (g_hBinding) {
-        RpcBindingFree(&g_hBinding);
-        g_hBinding = NULL;
+    if (hBinding) {
+        RpcBindingFree(&hBinding);
+        hBinding = NULL;
     }
 }
 

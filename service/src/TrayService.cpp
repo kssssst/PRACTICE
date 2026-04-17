@@ -7,6 +7,7 @@
 #include <string>
 #include <memory>
 #include <rpc.h>
+#include <cstdlib>
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
@@ -36,7 +37,7 @@ void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
 
-// RPC server implementation
+// RPC stub functions
 error_status_t StopService(void)
 {
     SetEvent(g_hServiceStopEvent);
@@ -46,8 +47,19 @@ error_status_t StopService(void)
 error_status_t GetServiceStatus(long *status)
 {
     if (!status) return RPC_S_INVALID_ARG;
-    *status = g_ServiceStatus.dwCurrentState;
+    *status = (long)g_ServiceStatus.dwCurrentState;
     return RPC_S_OK;
+}
+
+// MIDL memory management
+void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
+{
+    return malloc(cBytes);
+}
+
+void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
+{
+    free(p);
 }
 
 // Get parent process ID
@@ -289,24 +301,34 @@ int wmain(int argc, wchar_t *argv[])
     };
 
     if (!StartServiceCtrlDispatcherW(ServiceTable)) {
-        // Running as console app
-        g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-        g_StatusHandle = 0;
+        DWORD dwErr = GetLastError();
+        if (dwErr == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
+            // Running as console app for testing
+            g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+            g_StatusHandle = 0;
 
-        g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-        g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
-        g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
-        g_ServiceStatus.dwWin32ExitCode = 0;
-        g_ServiceStatus.dwServiceSpecificExitCode = 0;
-        g_ServiceStatus.dwCheckPoint = 0;
+            g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+            g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+            g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+            g_ServiceStatus.dwWin32ExitCode = 0;
+            g_ServiceStatus.dwServiceSpecificExitCode = 0;
+            g_ServiceStatus.dwCheckPoint = 0;
 
-        ServiceWorkerThread(NULL);
+            ServiceWorkerThread(NULL);
 
-        if (g_hServiceStopEvent) {
-            CloseHandle(g_hServiceStopEvent);
+            if (g_hServiceStopEvent) {
+                CloseHandle(g_hServiceStopEvent);
+            }
         }
     }
 
     DeleteCriticalSection(&g_ProcessMapLock);
     return 0;
+}
+
+// Legacy entry point for compatibility
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
+                    LPWSTR lpCmdLine, int nCmdShow)
+{
+    return wmain(__argc, __wargv);
 }
