@@ -75,7 +75,8 @@ void LaunchAppInSession(DWORD dwSessionId) {
     GetModuleFileNameW(NULL, szAppPath, MAX_PATH);
     wchar_t *p = wcsrchr(szAppPath, L'\\');
     if (p) wcscpy_s(p + 1, MAX_PATH - (p - szAppPath + 1), APP_PATH);
-    if (CreateProcessAsUserW(hDuplicate, szAppPath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+    if (CreateProcessAsUserW(hDuplicate, szAppPath, (LPWSTR)L"/hidden", NULL, NULL, FALSE,
+                        0, NULL, NULL, &si, &pi)) {
         EnterCriticalSection(&g_ProcessMapLock);
         if (g_ProcessMap.count(dwSessionId)) {
             TerminateProcess(g_ProcessMap[dwSessionId], 0);
