@@ -1,3 +1,5 @@
+#define _WIN32_WINNT 0x0601   // для SERVICE_ACCEPT_INTERROGATE
+
 #include <windows.h>
 #include <wtsapi32.h>
 #include <userenv.h>
@@ -49,22 +51,6 @@ error_status_t GetServiceStatus(handle_t hBinding, long *status) {
 
 void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes) { return malloc(cBytes); }
 void __RPC_USER MIDL_user_free(void __RPC_FAR * p) { free(p); }
-
-DWORD GetParentProcessId(DWORD dwProcessId) {
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE) return 0;
-    PROCESSENTRY32W pe32 = { sizeof(PROCESSENTRY32W) };
-    if (Process32FirstW(hSnapshot, &pe32)) {
-        do {
-            if (pe32.th32ProcessID == dwProcessId) {
-                CloseHandle(hSnapshot);
-                return pe32.th32ParentProcessID;
-            }
-        } while (Process32NextW(hSnapshot, &pe32));
-    }
-    CloseHandle(hSnapshot);
-    return 0;
-}
 
 void LaunchAppInSession(DWORD dwSessionId) {
     if (dwSessionId == 0) return;
@@ -143,7 +129,7 @@ DWORD WINAPI WTSNotificationThread(LPVOID) {
 }
 
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl) {
-    // Отключаем Stop и Shutdown – ничего не делаем
+    // Отключаем Stop и Shutdown
     if (dwCtrl == SERVICE_CONTROL_INTERROGATE)
         SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
 }
@@ -175,7 +161,7 @@ VOID WINAPI ServiceMain(DWORD, LPTSTR*) {
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
     g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
-    g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_INTERROGATE; // не принимаем STOP/SHUTDOWN
+    g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_INTERROGATE;
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
     HANDLE hWorker = CreateThread(NULL, 0, ServiceWorkerThread, NULL, 0, NULL);
     if (hWorker) WaitForSingleObject(hWorker, INFINITE), CloseHandle(hWorker);
@@ -189,7 +175,7 @@ int wmain(int argc, wchar_t* argv[]) {
     SERVICE_TABLE_ENTRYW table[] = { {(wchar_t*)SERVICE_NAME, ServiceMain}, {NULL, NULL} };
     if (!StartServiceCtrlDispatcherW(table)) {
         DWORD err = GetLastError();
-        if (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) { // режим консоли
+        if (err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
             g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
             ServiceWorkerThread(NULL);
             if (g_hServiceStopEvent) CloseHandle(g_hServiceStopEvent);
