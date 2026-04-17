@@ -40,20 +40,16 @@ void LaunchAppInAllSessions();
 void TerminateAllApps();
 
 // Функции RPC stub - реализация интерфейса ITrayService
-error_status_t StopService(handle_t hBinding)
-{
-    if (g_hServiceStopEvent) {
-        SetEvent(g_hServiceStopEvent);
-    }
+extern "C" {
+error_status_t StopService(handle_t hBinding) {
+    if (g_hServiceStopEvent) SetEvent(g_hServiceStopEvent);
     return RPC_S_OK;
 }
 
-error_status_t GetServiceStatus(handle_t hBinding, long *status)
-{
-    if (status) {
-        *status = (long)g_ServiceStatus.dwCurrentState;
-    }
+error_status_t GetServiceStatus(handle_t hBinding, long *status) {
+    if (status) *status = (long)g_ServiceStatus.dwCurrentState;
     return RPC_S_OK;
+}
 }
 
 // Управление памятью MIDL
