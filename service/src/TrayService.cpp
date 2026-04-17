@@ -230,7 +230,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
                                                 (RPC_WSTR)ALPC_ENDPOINT, NULL);
 
     if (status == RPC_S_OK) {
-        status = RpcServerRegisterIf(ITrayService_ServerIfHandle, NULL, NULL);
+        status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, NULL, NULL);
     }
 
     if (status == RPC_S_OK) {
@@ -240,7 +240,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
     if (status == RPC_S_OK) {
         WaitForSingleObject(g_hServiceStopEvent, INFINITE);
         RpcMgmtStopServerListening(NULL);
-        RpcServerUnregisterIf(ITrayService_ServerIfHandle, NULL, FALSE);
+        RpcServerUnregisterIf(ITrayService_v1_0_s_ifspec, NULL, FALSE);
     }
 
     if (hWTSThread) {
