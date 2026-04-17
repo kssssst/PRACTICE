@@ -1,8 +1,6 @@
-// UTF-8 encoded resource file
 #include "resources/src/resource.h"
 
-// Icon resource - using system default if ico file not found
-IDI_TRAY_ICON ICON "resources/src/TrayApp.ico"
+IDI_TRAY_ICON ICON "shell32.dll#3"
 
 STRINGTABLE
 BEGIN
@@ -31,4 +29,4 @@ END
   BEGIN
     VALUE "Translation", 0x409, 1200
   END
- END
+END

@@ -5,13 +5,10 @@
 extern "C" {
 #endif
 
-// RPC client initialization and communication
 int InitializeRPCClient();
 int StopServiceViaRPC();
 int GetServiceStatusViaRPC(long *pStatus);
 void CleanupRPCClient();
-
-// Service management functions
 int CheckAndStartService();
 int IsServiceRunning();
 DWORD GetParentProcessIdW(DWORD dwProcessId);
@@ -20,4 +17,4 @@ DWORD GetParentProcessIdW(DWORD dwProcessId);
 }
 #endif
 
-#endif // TRAYSERVICE_CLIENT_H
+#endif
