@@ -10,7 +10,7 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
 
-// MIDL memory management for client stub - must use extern "C" for MIDL compatibility
+// Управление памятью MIDL для клиентского stub'а - должно быть extern "C" для совместимости с MIDL
 extern "C" {
     void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
     {
@@ -26,10 +26,10 @@ extern "C" {
 #define SERVICE_NAME L"TrayAppService"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// Global RPC binding handle - required for implicit_handle
+// Глобальный RPC дескриптор привязки - требуется для implicit_handle
 handle_t hBinding = NULL;
 
-// Initialize RPC client
+// Инициализация RPC клиента
 int InitializeRPCClient()
 {
     RPC_STATUS status;
@@ -51,7 +51,7 @@ int InitializeRPCClient()
     return 0;
 }
 
-// Stop service via RPC
+// Остановка сервиса через RPC
 int StopServiceViaRPC()
 {
     if (!hBinding) {
@@ -62,7 +62,7 @@ int StopServiceViaRPC()
 
     error_status_t status = RPC_S_OK;
     __try {
-        status = StopService();
+        status = StopService(hBinding);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
@@ -70,7 +70,7 @@ int StopServiceViaRPC()
     return status == RPC_S_OK ? 0 : (int)status;
 }
 
-// Cleanup RPC client
+// Очистка RPC клиента
 void CleanupRPCClient()
 {
     if (hBinding) {
@@ -79,7 +79,7 @@ void CleanupRPCClient()
     }
 }
 
-// Get service status via RPC
+// Получение статуса сервиса через RPC
 int GetServiceStatusViaRPC(long *pStatus)
 {
     if (!hBinding) {
@@ -90,7 +90,7 @@ int GetServiceStatusViaRPC(long *pStatus)
 
     error_status_t status = RPC_S_OK;
     __try {
-        status = GetServiceStatus(pStatus);
+        status = GetServiceStatus(hBinding, pStatus);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
@@ -98,7 +98,7 @@ int GetServiceStatusViaRPC(long *pStatus)
     return status == RPC_S_OK ? 0 : (int)status;
 }
 
-// Check if service is running
+// Проверка, запущен ли сервис
 int IsServiceRunning()
 {
     SC_HANDLE hSCManager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
@@ -124,7 +124,7 @@ int IsServiceRunning()
     return isRunning;
 }
 
-// Check and start service if needed
+// Проверка и запуск сервиса, если необходимо
 int CheckAndStartService()
 {
     if (IsServiceRunning()) {
@@ -149,7 +149,7 @@ int CheckAndStartService()
         return -3;
     }
 
-    // Wait for service to start
+    // Ожидание запуска сервиса
     for (int i = 0; i < 30; i++) {
         Sleep(1000);
 

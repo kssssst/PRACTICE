@@ -16,21 +16,21 @@
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "rpcrt4.lib")
 
-// External interface handle from MIDL-generated code
+// Внешний дескриптор интерфейса из MIDL-сгенерированного кода
 extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
 
 #define SERVICE_NAME L"TrayAppService"
 #define APP_PATH L"TrayApp.exe"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// Global variables
+// Глобальные переменные
 SERVICE_STATUS g_ServiceStatus = { 0 };
 SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
 HANDLE g_hServiceStopEvent = NULL;
-std::map<DWORD, HANDLE> g_ProcessMap; // SessionID -> Process Handle
+std::map<DWORD, HANDLE> g_ProcessMap; // SessionID -> дескриптор процесса
 CRITICAL_SECTION g_ProcessMapLock;
 
-// Forward declarations
+// Предварительные объявления
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv);
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl);
 DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
@@ -39,7 +39,7 @@ void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
 
-// RPC stub functions - must use extern "C" for MIDL compatibility
+// Функции RPC stub - должны использовать extern "C" для совместимости с MIDL
 extern "C" {
     error_status_t StopService(void)
     {
@@ -57,7 +57,7 @@ extern "C" {
         return RPC_S_OK;
     }
 
-    // MIDL memory management
+    // Управление памятью MIDL
     void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
     {
         return malloc(cBytes);
@@ -69,7 +69,7 @@ extern "C" {
     }
 }
 
-// Get parent process ID
+// Получение ID родительского процесса
 DWORD GetParentProcessId(DWORD dwProcessId)
 {
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -94,10 +94,10 @@ DWORD GetParentProcessId(DWORD dwProcessId)
     return 0;
 }
 
-// Launch application in specific session
+// Запуск приложения в определённой сессии
 void LaunchAppInSession(DWORD dwSessionId)
 {
-    if (dwSessionId == 0) return; // Skip session 0
+    if (dwSessionId == 0) return; // Пропустить сессию 0
 
     HANDLE hToken = NULL;
     HANDLE hUserToken = NULL;
@@ -140,7 +140,7 @@ void LaunchAppInSession(DWORD dwSessionId)
     CloseHandle(hDuplicate);
 }
 
-// Launch app in all active sessions
+// Запуск приложения во всех активных сессиях
 void LaunchAppInAllSessions()
 {
     PWTS_SESSION_INFOW pSessionInfo = NULL;
@@ -156,7 +156,7 @@ void LaunchAppInAllSessions()
     }
 }
 
-// Terminate all launched applications
+// Завершение всех запущенных приложений
 void TerminateAllApps()
 {
     EnterCriticalSection(&g_ProcessMapLock);
@@ -172,7 +172,7 @@ void TerminateAllApps()
     LeaveCriticalSection(&g_ProcessMapLock);
 }
 
-// WTS notification thread - monitor for new user sessions
+// Поток уведомлений WTS - отслеживание новых пользовательских сессий
 DWORD WINAPI WTSNotificationThread(LPVOID lpParam)
 {
     HWND hMsgWindow = FindWindowW(L"STATIC", NULL);
@@ -208,7 +208,7 @@ DWORD WINAPI WTSNotificationThread(LPVOID lpParam)
     return 0;
 }
 
-// Service control handler
+// Обработчик управления сервисом
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl)
 {
     switch (dwCtrl) {
@@ -222,16 +222,16 @@ VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl)
     }
 }
 
-// Service worker thread
+// Рабочий поток сервиса
 DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
 {
-    // Start WTS notification
+    // Запуск потока уведомлений WTS
     HANDLE hWTSThread = CreateThread(NULL, 0, WTSNotificationThread, NULL, 0, NULL);
 
-    // Launch app in all current sessions
+    // Запуск приложения во всех активных сессиях
     LaunchAppInAllSessions();
 
-    // Start RPC server
+    // Запуск RPC сервера
     RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", 10,
                                                 (RPC_WSTR)ALPC_ENDPOINT, NULL);
 
@@ -260,7 +260,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
     return 0;
 }
 
-// Service main
+// Главная функция сервиса
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv)
 {
     g_StatusHandle = RegisterServiceCtrlHandlerW(SERVICE_NAME, ServiceCtrlHandler);
@@ -276,7 +276,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv)
 
     g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
 
-    g_ServiceStatus.dwControlsAccepted = 0; // Disable Stop/Shutdown
+    g_ServiceStatus.dwControlsAccepted = 0; // Отключить Stop/Shutdown
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
     g_ServiceStatus.dwCheckPoint = 0;
 
@@ -297,16 +297,18 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv)
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
 }
 
-// Entry point
+// Точка входа
 int wmain(int argc, wchar_t *argv[])
 {
     InitializeCriticalSection(&g_ProcessMapLock);
 
+    // Таблица точек входа сервиса
     SERVICE_TABLE_ENTRYW ServiceTable[] = {
         { (wchar_t *)SERVICE_NAME, ServiceMain },
         { NULL, NULL }
     };
 
+    // Запуск диспетчера управления сервисами
     if (!StartServiceCtrlDispatcherW(ServiceTable)) {
         DWORD dwErr = GetLastError();
         if (dwErr == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
