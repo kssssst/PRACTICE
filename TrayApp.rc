@@ -1,4 +1,4 @@
-#include "resources/src/resource.h"
+#define IDI_TRAY_ICON 101
 
 STRINGTABLE
 BEGIN
