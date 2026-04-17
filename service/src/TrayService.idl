@@ -1,13 +1,10 @@
 [
     uuid(12345678-1234-1234-1234-123456789012),
     version(1.0),
-    auto_handle
+    pointer_default(unique)
 ]
 interface ITrayService
 {
-    // Stop the service
-    error_status_t StopService();
-    
-    // Get service status  
-    error_status_t GetServiceStatus([out] long *status);
+    void StopService(void);
+    void GetServiceStatus([out] long *status);
 };

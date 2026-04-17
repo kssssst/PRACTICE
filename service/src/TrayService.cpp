@@ -8,6 +8,7 @@
 #include <memory>
 #include <rpc.h>
 #include <cstdlib>
+#include "TrayService.h"
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
@@ -25,9 +26,6 @@ HANDLE g_hServiceStopEvent = NULL;
 std::map<DWORD, HANDLE> g_ProcessMap; // SessionID -> Process Handle
 CRITICAL_SECTION g_ProcessMapLock;
 
-// RPC interface handle (declared by generated code)
-extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
-
 // Forward declarations
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv);
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl);
@@ -39,19 +37,18 @@ void TerminateAllApps();
 
 // RPC stub functions - must use extern "C" for MIDL compatibility
 extern "C" {
-    error_status_t StopService(void)
+    void StopService(void)
     {
         if (g_hServiceStopEvent) {
             SetEvent(g_hServiceStopEvent);
         }
-        return RPC_S_OK;
     }
 
-    error_status_t GetServiceStatus(long *status)
+    void GetServiceStatus(long *status)
     {
-        if (!status) return RPC_S_INVALID_ARG;
-        *status = (long)g_ServiceStatus.dwCurrentState;
-        return RPC_S_OK;
+        if (status) {
+            *status = (long)g_ServiceStatus.dwCurrentState;
+        }
     }
 
     // MIDL memory management
@@ -233,7 +230,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
                                                 (RPC_WSTR)ALPC_ENDPOINT, NULL);
 
     if (status == RPC_S_OK) {
-        status = RpcServerRegisterIf(ITrayService_ServerIfHandle, NULL, NULL);
+        status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, NULL, NULL);
     }
 
     if (status == RPC_S_OK) {
@@ -243,7 +240,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
     if (status == RPC_S_OK) {
         WaitForSingleObject(g_hServiceStopEvent, INFINITE);
         RpcMgmtStopServerListening(NULL);
-        RpcServerUnregisterIf(ITrayService_ServerIfHandle, NULL, FALSE);
+        RpcServerUnregisterIf(ITrayService_v1_0_s_ifspec, NULL, FALSE);
     }
 
     if (hWTSThread) {

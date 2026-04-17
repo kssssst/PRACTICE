@@ -18,7 +18,7 @@ file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
 # Генерируем RPC файлы из IDL
 add_custom_command(
     OUTPUT "${RPC_OUTPUT_DIR}/TrayService_s.c" "${RPC_OUTPUT_DIR}/TrayService.h"
-    COMMAND midl.exe /server stub /app_config /out "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
+    COMMAND midl.exe /server stub /out "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
     COMMENT "Generating RPC server files from IDL"
 )

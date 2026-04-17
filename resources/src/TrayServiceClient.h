@@ -8,6 +8,7 @@ extern "C" {
 // RPC client functions
 int InitializeRPCClient();
 int StopServiceViaRPC();
+int GetServiceStatusViaRPC(long *pStatus);
 void CleanupRPCClient();
 
 // Service management functions

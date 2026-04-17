@@ -25,7 +25,7 @@ extern "C" {
 #define SERVICE_NAME L"TrayAppService"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// RPC client handle - will be used as implicit handle
+// Global RPC binding handle - required for implicit_handle
 handle_t hBinding = NULL;
 
 // Initialize RPC client
@@ -59,11 +59,6 @@ int StopServiceViaRPC()
         }
     }
 
-    RPC_STATUS status = RpcBindingSetObject(hBinding, NULL);
-    if (status != RPC_S_OK) {
-        return -1;
-    }
-
     __try {
         StopService();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -80,6 +75,24 @@ void CleanupRPCClient()
         RpcBindingFree(&hBinding);
         hBinding = NULL;
     }
+}
+
+// Get service status via RPC
+int GetServiceStatusViaRPC(long *pStatus)
+{
+    if (!hBinding) {
+        if (InitializeRPCClient() != 0) {
+            return -1;
+        }
+    }
+
+    __try {
+        GetServiceStatus(pStatus);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+
+    return 0;
 }
 
 // Check if service is running
