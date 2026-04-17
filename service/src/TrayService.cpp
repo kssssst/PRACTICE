@@ -6,14 +6,12 @@
 #include <map>
 #include <string>
 #include <memory>
+#include <rpc.h>
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "rpcrt4.lib")
-
-// RPC related declarations
-extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
 
 #define SERVICE_NAME L"TrayAppService"
 #define APP_PATH L"TrayApp.exe"
@@ -25,6 +23,9 @@ SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
 HANDLE g_hServiceStopEvent = NULL;
 std::map<DWORD, HANDLE> g_ProcessMap; // SessionID -> Process Handle
 CRITICAL_SECTION g_ProcessMapLock;
+
+// RPC interface handle (declared by generated code)
+extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
 
 // Forward declarations
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv);
@@ -155,15 +156,14 @@ void TerminateAllApps()
 // WTS notification thread - monitor for new user sessions
 DWORD WINAPI WTSNotificationThread(LPVOID lpParam)
 {
-    HANDLE hServerEvent = WTSRegisterSessionNotification(HWND_MESSAGE, NOTIFY_FOR_ALL_SESSIONS);
-    if (!hServerEvent) {
-        return 1;
+    HWND hMsgWindow = FindWindowW(L"STATIC", NULL);
+    if (!hMsgWindow) {
+        hMsgWindow = HWND_MESSAGE;
     }
 
-    while (WaitForSingleObject(g_hServiceStopEvent, 100) == WAIT_TIMEOUT) {
-        PWTSSESSION_NOTIFICATION pNotification = NULL;
-        
-        // Check for new sessions
+    WTSRegisterSessionNotification(hMsgWindow, NOTIFY_FOR_ALL_SESSIONS);
+
+    while (WaitForSingleObject(g_hServiceStopEvent, 1000) == WAIT_TIMEOUT) {
         PWTS_SESSION_INFOW pSessionInfo = NULL;
         DWORD dwSessionCount = 0;
 
@@ -181,12 +181,10 @@ DWORD WINAPI WTSNotificationThread(LPVOID lpParam)
             }
             WTSFreeMemory(pSessionInfo);
         }
-
-        Sleep(1000); // Check every second
     }
 
-    if (hServerEvent) {
-        WTSUnRegisterSessionNotification(hServerEvent);
+    if (hMsgWindow != HWND_MESSAGE) {
+        WTSUnRegisterSessionNotification(hMsgWindow);
     }
     return 0;
 }
@@ -215,8 +213,8 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
     LaunchAppInAllSessions();
 
     // Start RPC server
-    RPC_STATUS status = RpcServerUseProtseqEpW((unsigned char *)L"ncalrpc", 10,
-                                                (unsigned char *)ALPC_ENDPOINT, NULL);
+    RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", 10,
+                                                (RPC_WSTR)ALPC_ENDPOINT, NULL);
 
     if (status == RPC_S_OK) {
         status = RpcServerRegisterIf(ITrayService_ServerIfHandle, NULL, NULL);
@@ -228,7 +226,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
 
     if (status == RPC_S_OK) {
         WaitForSingleObject(g_hServiceStopEvent, INFINITE);
-        RpcServerStopListening(ITrayService_ServerIfHandle);
+        RpcMgmtStopServerListening(NULL);
         RpcServerUnregisterIf(ITrayService_ServerIfHandle, NULL, FALSE);
     }
 

@@ -22,7 +22,7 @@ file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
 # Генерируем RPC файлы из IDL для клиента
 add_custom_command(
     OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
-    COMMAND midl.exe /out "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
+    COMMAND midl.exe /client stub /out "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
     COMMENT "Generating RPC client files from IDL"
 )

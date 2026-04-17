@@ -1,7 +1,9 @@
 #include <windows.h>
 #include <winsvc.h>
+#include <rpc.h>
 #include <stdio.h>
 #include "TrayServiceClient.h"
+#include "TrayService.h"
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
@@ -9,30 +11,26 @@
 #define SERVICE_NAME L"TrayAppService"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// RPC client declarations
+// RPC client handle
 static RPC_BINDING_HANDLE g_hBinding = NULL;
-
-extern "C" {
-    extern void * __MIDL_user_allocate(size_t);
-    extern void __MIDL_user_free(void *);
-    extern error_status_t StopService(void);
-    extern error_status_t GetServiceStatus(long *status);
-}
 
 // Initialize RPC client
 int InitializeRPCClient()
 {
     RPC_STATUS status;
-    RPC_CSTR pszUuid = NULL;
-    RPC_CSTR pszProtSeq = (RPC_CSTR)L"ncalrpc";
-    RPC_CSTR pszNetAddr = NULL;
-    RPC_CSTR pszEndpoint = (RPC_CSTR)ALPC_ENDPOINT;
-    RPC_CSTR pszOptions = NULL;
+    RPC_WSTR pszStringBinding = NULL;
 
-    status = RpcStringBindingComposeW(pszUuid, pszProtSeq, pszNetAddr, pszEndpoint,
-                                       pszOptions, (RPC_WSTR *)&g_hBinding);
+    status = RpcStringBindingComposeW(NULL, L"ncalrpc", NULL,
+                                       (RPC_WSTR)ALPC_ENDPOINT, NULL, &pszStringBinding);
     if (status) {
         return -1;
+    }
+
+    status = RpcBindingFromStringBindingW(pszStringBinding, &g_hBinding);
+    RpcStringFreeW(&pszStringBinding);
+
+    if (status) {
+        return -2;
     }
 
     return 0;
@@ -47,15 +45,15 @@ int StopServiceViaRPC()
         }
     }
 
-    RPC_STATUS status = RPC_S_OK;
+    error_status_t rpcStatus = RPC_S_OK;
     
     __try {
-        StopService();
+        rpcStatus = StopService();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        status = RpcExceptionCode();
+        rpcStatus = RpcExceptionCode();
     }
 
-    return status == RPC_S_OK ? 0 : -1;
+    return rpcStatus == RPC_S_OK ? 0 : -1;
 }
 
 // Cleanup RPC client
@@ -122,9 +120,9 @@ int CheckAndStartService()
     for (int i = 0; i < 30; i++) {
         Sleep(1000);
 
-        SERVICE_STATUS status = { 0 };
-        if (QueryServiceStatus(hService, &status)) {
-            if (status.dwCurrentState == SERVICE_RUNNING) {
+        SERVICE_STATUS svc_status = { 0 };
+        if (QueryServiceStatus(hService, &svc_status)) {
+            if (svc_status.dwCurrentState == SERVICE_RUNNING) {
                 CloseServiceHandle(hService);
                 CloseServiceHandle(hSCManager);
                 return 0;

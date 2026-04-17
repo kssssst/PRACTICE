@@ -2,8 +2,11 @@
 #include <shellapi.h>
 #include <cstdlib>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include "resource.h"
 #include "TrayServiceClient.h"
+
+#pragma comment(lib, "psapi.lib")
 
 #define WM_TRAYICON      (WM_USER + 1)
 #define ID_TRAY_EXIT     1001
