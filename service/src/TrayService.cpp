@@ -7,6 +7,7 @@
 #include <string>
 #include <memory>
 #include <rpc.h>
+#include <rpcndr.h>
 #include <cstdlib>
 #include "TrayService.h"
 
@@ -14,6 +15,9 @@
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "rpcrt4.lib")
+
+// External interface handle from MIDL-generated code
+extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
 
 #define SERVICE_NAME L"TrayAppService"
 #define APP_PATH L"TrayApp.exe"
@@ -37,18 +41,20 @@ void TerminateAllApps();
 
 // RPC stub functions - must use extern "C" for MIDL compatibility
 extern "C" {
-    void StopService(void)
+    error_status_t StopService(void)
     {
         if (g_hServiceStopEvent) {
             SetEvent(g_hServiceStopEvent);
         }
+        return RPC_S_OK;
     }
 
-    void GetServiceStatus(long *status)
+    error_status_t GetServiceStatus(long *status)
     {
         if (status) {
             *status = (long)g_ServiceStatus.dwCurrentState;
         }
+        return RPC_S_OK;
     }
 
     // MIDL memory management
@@ -230,7 +236,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
                                                 (RPC_WSTR)ALPC_ENDPOINT, NULL);
 
     if (status == RPC_S_OK) {
-        status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, NULL, NULL);
+        status = RpcServerRegisterIf(ITrayService_ServerIfHandle, NULL, NULL);
     }
 
     if (status == RPC_S_OK) {
@@ -240,7 +246,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
     if (status == RPC_S_OK) {
         WaitForSingleObject(g_hServiceStopEvent, INFINITE);
         RpcMgmtStopServerListening(NULL);
-        RpcServerUnregisterIf(ITrayService_v1_0_s_ifspec, NULL, FALSE);
+        RpcServerUnregisterIf(ITrayService_ServerIfHandle, NULL, FALSE);
     }
 
     if (hWTSThread) {

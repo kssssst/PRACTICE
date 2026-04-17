@@ -5,6 +5,6 @@
 ]
 interface ITrayService
 {
-    void StopService(void);
-    void GetServiceStatus([out] long *status);
+    error_status_t StopService(void);
+    error_status_t GetServiceStatus([out] long *status);
 };

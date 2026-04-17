@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <winsvc.h>
 #include <rpc.h>
+#include <rpcndr.h>
 #include <stdio.h>
 #include <cstdlib>
 #include "TrayServiceClient.h"
@@ -59,13 +60,14 @@ int StopServiceViaRPC()
         }
     }
 
+    error_status_t status = RPC_S_OK;
     __try {
-        StopService();
+        status = StopService();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
 
-    return 0;
+    return status == RPC_S_OK ? 0 : (int)status;
 }
 
 // Cleanup RPC client
@@ -86,13 +88,14 @@ int GetServiceStatusViaRPC(long *pStatus)
         }
     }
 
+    error_status_t status = RPC_S_OK;
     __try {
-        GetServiceStatus(pStatus);
+        status = GetServiceStatus(pStatus);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
 
-    return 0;
+    return status == RPC_S_OK ? 0 : (int)status;
 }
 
 // Check if service is running
