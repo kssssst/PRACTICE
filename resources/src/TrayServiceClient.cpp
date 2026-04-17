@@ -2,11 +2,25 @@
 #include <winsvc.h>
 #include <rpc.h>
 #include <stdio.h>
+#include <cstdlib>
 #include "TrayServiceClient.h"
 #include "TrayService.h"
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
+
+// MIDL memory management for client stub - must use extern "C" for MIDL compatibility
+extern "C" {
+    void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
+    {
+        return malloc(cBytes);
+    }
+
+    void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
+    {
+        free(p);
+    }
+}
 
 #define SERVICE_NAME L"TrayAppService"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"

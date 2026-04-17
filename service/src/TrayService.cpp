@@ -37,31 +37,33 @@ void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
 
-// RPC stub functions
-error_status_t StopService(void)
-{
-    if (g_hServiceStopEvent) {
-        SetEvent(g_hServiceStopEvent);
+// RPC stub functions - must use extern "C" for MIDL compatibility
+extern "C" {
+    error_status_t StopService(void)
+    {
+        if (g_hServiceStopEvent) {
+            SetEvent(g_hServiceStopEvent);
+        }
+        return RPC_S_OK;
     }
-    return RPC_S_OK;
-}
 
-error_status_t GetServiceStatus(long *status)
-{
-    if (!status) return RPC_S_INVALID_ARG;
-    *status = (long)g_ServiceStatus.dwCurrentState;
-    return RPC_S_OK;
-}
+    error_status_t GetServiceStatus(long *status)
+    {
+        if (!status) return RPC_S_INVALID_ARG;
+        *status = (long)g_ServiceStatus.dwCurrentState;
+        return RPC_S_OK;
+    }
 
-// MIDL memory management
-void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
-{
-    return malloc(cBytes);
-}
+    // MIDL memory management
+    void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
+    {
+        return malloc(cBytes);
+    }
 
-void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
-{
-    free(p);
+    void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
+    {
+        free(p);
+    }
 }
 
 // Get parent process ID
