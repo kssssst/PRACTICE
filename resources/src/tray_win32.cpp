@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <tlhelp32.h>
 #include <psapi.h>
+#include <sstream>
 #include "resource.h"
 #include "TrayServiceClient.h"
 
@@ -27,8 +28,9 @@ void AddTrayIcon();
 void RemoveTrayIcon();
 void ShowContextMenu(HWND);
 void ShowMainWindow();
-void EnsureSingleInstance();
+void EnsureSingleInstancePerSession();
 DWORD GetParentProcessId(DWORD dwProcessId);
+void StartServiceIfNeeded();
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == g_uTaskbarRestart) {
@@ -72,40 +74,47 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
     g_hInst = hInstance;
+
+    // Режим: только запуск службы (используется при повышении прав)
+    if (wcsstr(lpCmdLine, L"/startserviceonly")) {
+        if (!IsServiceRunning()) {
+            CheckAndStartService();
+        }
+        return 0;
+    }
+
     if (wcsstr(lpCmdLine, L"/hidden")) {
         g_bLaunchedByService = TRUE;
         nCmdShow = SW_HIDE;
     }
 
-    // Проверка родительского процесса
-    DWORD dwParent = GetParentProcessId(GetCurrentProcessId());
+    // Проверка родительского процесса (только для запуска из службы)
     BOOL bParentIsService = FALSE;
-    if (dwParent) {
-        HANDLE hParent = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, dwParent);
-        if (hParent) {
-            wchar_t szPath[MAX_PATH];
-            if (GetModuleFileNameExW(hParent, NULL, szPath, MAX_PATH)) {
-                wchar_t *p = wcsrchr(szPath, L'\\');
-                if (p && wcsicmp(p+1, L"TrayService.exe") == 0) bParentIsService = TRUE;
+    if (g_bLaunchedByService) {
+        DWORD dwParent = GetParentProcessId(GetCurrentProcessId());
+        if (dwParent) {
+            HANDLE hParent = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, dwParent);
+            if (hParent) {
+                wchar_t szPath[MAX_PATH];
+                if (GetModuleFileNameExW(hParent, NULL, szPath, MAX_PATH)) {
+                    wchar_t *p = wcsrchr(szPath, L'\\');
+                    if (p && _wcsicmp(p+1, L"TrayService.exe") == 0)
+                        bParentIsService = TRUE;
+                }
+                CloseHandle(hParent);
             }
-            CloseHandle(hParent);
+        }
+        if (!bParentIsService) {
+            return 0; // не от службы, но с /hidden – выходим
         }
     }
 
-    if (!bParentIsService) {
-        // Запущено вручную – только запускаем службу и выходим
-        if (!IsServiceRunning()) {
-            if (CheckAndStartService() != 0) {
-                MessageBoxW(NULL, L"Не удалось запустить службу TrayAppService", L"Ошибка", MB_OK|MB_ICONERROR);
-                return 1;
-            }
-        }
-        // Завершаем работу приложения (требование: запустить службу и закрыться)
-        return 0;
+    // Если запущено вручную (не из службы) – проверяем и запускаем службу при необходимости
+    if (!g_bLaunchedByService) {
+        StartServiceIfNeeded();
     }
 
-    // Запущено службой – нормальная работа
-    EnsureSingleInstance();
+    EnsureSingleInstancePerSession();
 
     WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
     wc.lpfnWndProc = WndProc;
@@ -166,8 +175,12 @@ void ShowMainWindow() {
     SetForegroundWindow(g_hWnd);
 }
 
-void EnsureSingleInstance() {
-    g_hMutex = CreateMutexW(NULL, TRUE, L"Global\\TrayAppWin32_Mutex");
+void EnsureSingleInstancePerSession() {
+    DWORD sessionId = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
+    wchar_t mutexName[64];
+    wsprintfW(mutexName, L"Local\\TrayAppWin32_Mutex_Session_%lu", sessionId);
+    g_hMutex = CreateMutexW(NULL, TRUE, mutexName);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND hExisting = FindWindowW(L"TrayAppWin32Class", NULL);
         if (hExisting) {
@@ -191,4 +204,24 @@ DWORD GetParentProcessId(DWORD dwProcessId) {
     }
     CloseHandle(hSnapshot);
     return 0;
+}
+
+void StartServiceIfNeeded() {
+    if (IsServiceRunning()) return;
+
+    wchar_t szPath[MAX_PATH];
+    GetModuleFileNameW(NULL, szPath, MAX_PATH);
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+    sei.lpVerb = L"runas";
+    sei.lpFile = szPath;
+    sei.lpParameters = L"/startserviceonly";
+    sei.nShow = SW_HIDE;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+
+    if (ShellExecuteExW(&sei)) {
+        WaitForSingleObject(sei.hProcess, INFINITE);
+        CloseHandle(sei.hProcess);
+    } else {
+        MessageBoxW(NULL, L"Не удалось запустить службу TrayAppService.\nПопробуйте запустить приложение от имени администратора.", L"Ошибка", MB_OK|MB_ICONERROR);
+    }
 }
