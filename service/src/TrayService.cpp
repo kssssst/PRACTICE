@@ -40,18 +40,20 @@ void LaunchAppInAllSessions();
 void TerminateAllApps();
 
 // Функции RPC stub - реализация интерфейса ITrayService
-void StopService(handle_t hBinding)
+error_status_t StopService(void)
 {
     if (g_hServiceStopEvent) {
         SetEvent(g_hServiceStopEvent);
     }
+    return RPC_S_OK;
 }
 
-void GetServiceStatus(handle_t hBinding, long *status)
+error_status_t GetServiceStatus(long *status)
 {
     if (status) {
         *status = (long)g_ServiceStatus.dwCurrentState;
     }
+    return RPC_S_OK;
 }
 
 // Управление памятью MIDL
