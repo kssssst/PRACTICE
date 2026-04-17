@@ -22,8 +22,8 @@
 #define APP_PATH L"TrayApp.exe"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// Символ, генерируемый MIDL в TrayService_s.c
-extern RPC_IF_HANDLE ITrayService_v1_0_s_ifspec;
+// Подключаем сгенерированный MIDL заголовок, где объявлен ITrayService_v1_0_s_ifspec
+#include "TrayService.h"
 
 // Глобальные переменные службы
 SERVICE_STATUS g_ServiceStatus = {0};
@@ -32,7 +32,6 @@ HANDLE g_hServiceStopEvent = NULL;
 std::map<DWORD, HANDLE> g_ProcessMap;
 CRITICAL_SECTION g_ProcessMapLock;
 
-// Прототипы
 void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
