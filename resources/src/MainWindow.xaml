@@ -1,0 +1,13 @@
+<Window
+    x:Class="TrayApp.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Tray Application">
+    <Grid>
+        <MenuBar>
+            <MenuBarItem Title="Файл">
+                <MenuFlyoutItem x:Name="ExitMenuItem" Text="Выход"/>
+            </MenuBarItem>
+        </MenuBar>
+    </Grid>
+</Window>
