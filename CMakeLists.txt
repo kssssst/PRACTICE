@@ -4,6 +4,9 @@ project(TrayApp)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Статическое связывание Visual C++ Runtime
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # Включаем Resource Compiler для RC файлов
 enable_language(RC)
 
