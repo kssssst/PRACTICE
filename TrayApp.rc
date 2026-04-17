@@ -1,4 +1,9 @@
 // UTF-8 encoded resource file
+#include "resources/src/resource.h"
+
+// Icon resource - using system default if ico file not found
+IDI_TRAY_ICON ICON "resources/src/TrayApp.ico"
+
 STRINGTABLE
 BEGIN
     1 "TrayApp"

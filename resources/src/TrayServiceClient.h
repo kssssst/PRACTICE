@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-// RPC client functions
+// RPC client initialization and communication
 int InitializeRPCClient();
 int StopServiceViaRPC();
 int GetServiceStatusViaRPC(long *pStatus);
@@ -14,6 +14,7 @@ void CleanupRPCClient();
 // Service management functions
 int CheckAndStartService();
 int IsServiceRunning();
+DWORD GetParentProcessIdW(DWORD dwProcessId);
 
 #ifdef __cplusplus
 }

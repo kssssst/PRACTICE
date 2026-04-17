@@ -9,28 +9,27 @@
 #include <rpc.h>
 #include <rpcndr.h>
 #include <cstdlib>
-#include "TrayService.h"
 
 #pragma comment(lib, "wtsapi32.lib")
 #pragma comment(lib, "userenv.lib")
-#pragma comment(lib, "ntdll.lib")
+#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
 
 #define SERVICE_NAME L"TrayAppService"
 #define APP_PATH L"TrayApp.exe"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// Внешний дескриптор интерфейса RPC (генерируется MIDL)
-extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
+// RPC interface handle (from MIDL generated code)
+extern RPC_IF_HANDLE ITrayService_v1_0_s_ifspec;
 
-// Глобальные переменные
+// Global variables
 SERVICE_STATUS g_ServiceStatus = { 0 };
 SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
 HANDLE g_hServiceStopEvent = NULL;
-std::map<DWORD, HANDLE> g_ProcessMap; // SessionID -> дескриптор процесса
+std::map<DWORD, HANDLE> g_ProcessMap; // SessionID -> process handle
 CRITICAL_SECTION g_ProcessMapLock;
 
-// Предварительные объявления
+// Forward declarations
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv);
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl);
 DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
@@ -39,20 +38,24 @@ void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
 
-// Функции RPC stub - реализация интерфейса ITrayService
+// RPC stub implementations
 extern "C" {
-error_status_t StopService(handle_t hBinding) {
-    if (g_hServiceStopEvent) SetEvent(g_hServiceStopEvent);
+error_status_t StopService(void) {
+    if (g_hServiceStopEvent) {
+        SetEvent(g_hServiceStopEvent);
+    }
     return RPC_S_OK;
 }
 
-error_status_t GetServiceStatus(handle_t hBinding, long *status) {
-    if (status) *status = (long)g_ServiceStatus.dwCurrentState;
+error_status_t GetServiceStatus(long *status) {
+    if (status) {
+        *status = (long)g_ServiceStatus.dwCurrentState;
+    }
     return RPC_S_OK;
 }
 }
 
-// Управление памятью MIDL
+// MIDL memory management
 void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
 {
     return malloc(cBytes);
@@ -63,13 +66,13 @@ void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
     free(p);
 }
 
-// Получение ID родительского процесса
+// Get parent process ID
 DWORD GetParentProcessId(DWORD dwProcessId)
 {
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnapshot == INVALID_HANDLE_VALUE) return 0;
 
-    PROCESSENTRY32W pe32;
+    PROCESSENTRY32W pe32 = { 0 };
     pe32.dwSize = sizeof(PROCESSENTRY32W);
 
     if (!Process32FirstW(hSnapshot, &pe32)) {
@@ -79,8 +82,9 @@ DWORD GetParentProcessId(DWORD dwProcessId)
 
     do {
         if (pe32.th32ProcessID == dwProcessId) {
+            DWORD dwParentId = pe32.th32ParentProcessID;
             CloseHandle(hSnapshot);
-            return pe32.th32ParentProcessID;
+            return dwParentId;
         }
     } while (Process32NextW(hSnapshot, &pe32));
 
@@ -88,16 +92,276 @@ DWORD GetParentProcessId(DWORD dwProcessId)
     return 0;
 }
 
-// Запуск приложения в определённой сессии
+// Launch app in specific session
 void LaunchAppInSession(DWORD dwSessionId)
 {
-    if (dwSessionId == 0) return; // Пропустить сессию 0
+    if (dwSessionId == 0) return; // Skip session 0
 
     HANDLE hToken = NULL;
-    HANDLE hUserToken = NULL;
-
     if (!WTSQueryUserToken(dwSessionId, &hToken)) {
         return;
+    }
+
+    HANDLE hDuplicate = NULL;
+    if (!DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, NULL, 
+                         SecurityIdentification, TokenPrimary, &hDuplicate)) {
+        CloseHandle(hToken);
+        return;
+    }
+    CloseHandle(hToken);
+
+    STARTUPINFOW si = { 0 };
+    si.cb = sizeof(STARTUPINFOW);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi = { 0 };
+
+    wchar_t szAppPath[MAX_PATH];
+    GetModuleFileNameW(NULL, szAppPath, MAX_PATH);
+    wchar_t *p = wcsrchr(szAppPath, L'\\');
+    if (p) {
+        wcscpy_s(p + 1, MAX_PATH - (p - szAppPath + 1), APP_PATH);
+    }
+
+    if (CreateProcessAsUserW(hDuplicate, szAppPath, NULL, NULL, NULL, FALSE,
+                            0, NULL, NULL, &si, &pi)) {
+        EnterCriticalSection(&g_ProcessMapLock);
+        if (g_ProcessMap.count(dwSessionId)) {
+            TerminateProcess(g_ProcessMap[dwSessionId], 0);
+            CloseHandle(g_ProcessMap[dwSessionId]);
+        }
+        g_ProcessMap[dwSessionId] = pi.hProcess;
+        LeaveCriticalSection(&g_ProcessMapLock);
+        CloseHandle(pi.hThread);
+    } else {
+        CloseHandle(pi.hProcess);
+    }
+
+    CloseHandle(hDuplicate);
+}
+
+// Launch app in all active sessions
+void LaunchAppInAllSessions()
+{
+    PWTS_SESSION_INFOW pSessionInfo = NULL;
+    DWORD dwSessionCount = 0;
+
+    if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, 
+                              &pSessionInfo, &dwSessionCount)) {
+        for (DWORD i = 0; i < dwSessionCount; i++) {
+            if (pSessionInfo[i].SessionId != 0 && pSessionInfo[i].State == WTSActive) {
+                LaunchAppInSession(pSessionInfo[i].SessionId);
+            }
+        }
+        WTSFreeMemory(pSessionInfo);
+    }
+}
+
+// Terminate all running apps
+void TerminateAllApps()
+{
+    EnterCriticalSection(&g_ProcessMapLock);
+    
+    for (auto &pair : g_ProcessMap) {
+        if (pair.second) {
+            TerminateProcess(pair.second, 0);
+            WaitForSingleObject(pair.second, 1000);
+            CloseHandle(pair.second);
+        }
+    }
+    g_ProcessMap.clear();
+    
+    LeaveCriticalSection(&g_ProcessMapLock);
+}
+
+// WTS notification thread - monitor new user sessions
+DWORD WINAPI WTSNotificationThread(LPVOID lpParam)
+{
+    while (WaitForSingleObject(g_hServiceStopEvent, 500) == WAIT_TIMEOUT) {
+        PWTS_SESSION_INFOW pSessionInfo = NULL;
+        DWORD dwSessionCount = 0;
+
+        if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, 
+                                  &pSessionInfo, &dwSessionCount)) {
+            for (DWORD i = 0; i < dwSessionCount; i++) {
+                if (pSessionInfo[i].SessionId != 0 && pSessionInfo[i].State == WTSActive) {
+                    EnterCriticalSection(&g_ProcessMapLock);
+                    bool bExists = g_ProcessMap.count(pSessionInfo[i].SessionId) > 0;
+                    LeaveCriticalSection(&g_ProcessMapLock);
+                    
+                    if (!bExists) {
+                        LaunchAppInSession(pSessionInfo[i].SessionId);
+                    }
+                }
+            }
+            WTSFreeMemory(pSessionInfo);
+        }
+    }
+
+    return 0;
+}
+
+// Service control handler
+VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl)
+{
+    // We disabled Stop and Shutdown handlers
+    // This handler is kept for compatibility but doesn't process Stop/Shutdown
+    switch (dwCtrl) {
+        case SERVICE_CONTROL_INTERROGATE:
+            SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
+            break;
+        default:
+            break;
+    }
+}
+
+// Service worker thread
+DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
+{
+    // Launch app in all active sessions
+    LaunchAppInAllSessions();
+
+    // Create RPC server
+    RPC_STATUS status = RpcServerUseProtseqEpW(
+        (RPC_WSTR)L"ncalrpc", 
+        10,
+        (RPC_WSTR)ALPC_ENDPOINT, 
+        NULL);
+
+    if (status == RPC_S_OK) {
+        status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, NULL, NULL);
+    }
+
+    if (status == RPC_S_OK) {
+        status = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
+    }
+
+    // Wait for stop event or RPC server error
+    WaitForSingleObject(g_hServiceStopEvent, INFINITE);
+
+    // Stop RPC server
+    RpcMgmtStopServerListening(NULL);
+    RpcServerUnregisterIf(ITrayService_v1_0_s_ifspec, NULL, FALSE);
+
+    // Terminate all apps
+    TerminateAllApps();
+
+    return 0;
+}
+
+// Service main function
+VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv)
+{
+    g_StatusHandle = RegisterServiceCtrlHandlerW(SERVICE_NAME, ServiceCtrlHandler);
+    if (!g_StatusHandle) {
+        return;
+    }
+
+    // Set service status to start pending
+    g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    g_ServiceStatus.dwCurrentState = SERVICE_START_PENDING;
+    g_ServiceStatus.dwControlsAccepted = 0;
+    g_ServiceStatus.dwWin32ExitCode = 0;
+    g_ServiceStatus.dwServiceSpecificExitCode = 0;
+    g_ServiceStatus.dwCheckPoint = 0;
+    g_ServiceStatus.dwWaitHint = 0;
+
+    SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
+
+    // Create stop event
+    g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_hServiceStopEvent) {
+        g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
+        g_ServiceStatus.dwWin32ExitCode = GetLastError();
+        SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
+        return;
+    }
+
+    // Set service as running (disable Stop/Shutdown controls)
+    g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+    g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_INTERROGATE;
+    g_ServiceStatus.dwCheckPoint = 0;
+    g_ServiceStatus.dwWaitHint = 0;
+
+    SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
+
+    // Start notification thread
+    HANDLE hWTSThread = CreateThread(NULL, 0, WTSNotificationThread, NULL, 0, NULL);
+
+    // Start worker thread
+    HANDLE hWorkerThread = CreateThread(NULL, 0, ServiceWorkerThread, NULL, 0, NULL);
+    
+    if (hWorkerThread) {
+        WaitForSingleObject(hWorkerThread, INFINITE);
+        CloseHandle(hWorkerThread);
+    }
+
+    if (hWTSThread) {
+        SetEvent(g_hServiceStopEvent);
+        WaitForSingleObject(hWTSThread, 5000);
+        CloseHandle(hWTSThread);
+    }
+
+    // Clean up
+    if (g_hServiceStopEvent) {
+        CloseHandle(g_hServiceStopEvent);
+        g_hServiceStopEvent = NULL;
+    }
+
+    // Set service status to stopped
+    g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
+    g_ServiceStatus.dwCheckPoint = 0;
+    g_ServiceStatus.dwWaitHint = 0;
+    SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
+}
+
+// Entry point
+int wmain(int argc, wchar_t *argv[])
+{
+    InitializeCriticalSection(&g_ProcessMapLock);
+
+    // Service dispatch table
+    SERVICE_TABLE_ENTRYW ServiceTable[] = {
+        { (wchar_t *)SERVICE_NAME, ServiceMain },
+        { NULL, NULL }
+    };
+
+    // Start service control dispatcher
+    if (!StartServiceCtrlDispatcherW(ServiceTable)) {
+        DWORD dwErr = GetLastError();
+        if (dwErr == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
+            // Running as console app (for testing)
+            g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+            
+            // Initialize globals
+            g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+            g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+            g_ServiceStatus.dwControlsAccepted = 0;
+            g_ServiceStatus.dwWin32ExitCode = 0;
+            g_ServiceStatus.dwCheckPoint = 0;
+
+            // Run worker
+            ServiceWorkerThread(NULL);
+
+            // Clean up
+            if (g_hServiceStopEvent) {
+                CloseHandle(g_hServiceStopEvent);
+            }
+        }
+    }
+
+    DeleteCriticalSection(&g_ProcessMapLock);
+    return 0;
+}
+
+// Legacy entry point
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
+                    LPWSTR lpCmdLine, int nCmdShow)
+{
+    return wmain(__argc, __wargv);
+}
+
     }
 
     HANDLE hDuplicate = NULL;
