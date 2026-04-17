@@ -1,7 +1,5 @@
 #include "resources/src/resource.h"
 
-IDI_TRAY_ICON ICON "shell32.dll#3"
-
 STRINGTABLE
 BEGIN
     1 "TrayApp"
