@@ -1,9 +1,11 @@
-#include "winresource.h"
+#include "resources/src/resource.h"
 
 STRINGTABLE
 BEGIN
     1 "TrayApp"
 END
+
+IDI_TRAY_ICON ICON "resources/icon.ico"
 
 1 VERSIONINFO
  FILEVERSION 1,0,0,0

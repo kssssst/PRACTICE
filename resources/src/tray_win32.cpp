@@ -1,8 +1,7 @@
-#define WIN32_LEAN_AND_MEAN
-#define UNICODE
-#define _UNICODE
 #include <windows.h>
 #include <shellapi.h>
+#include <cstdlib>
+#include "resource.h"
 
 #define WM_TRAYICON      (WM_USER + 1)
 #define ID_TRAY_EXIT     1001
