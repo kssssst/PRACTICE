@@ -5,6 +5,6 @@
 ]
 interface ITrayService
 {
-    error_status_t StopService(void);
-    error_status_t GetServiceStatus([out] long *status);
+    error_status_t StopService([in] handle_t hBinding);
+    error_status_t GetServiceStatus([in] handle_t hBinding, [out] long *status);
 };
