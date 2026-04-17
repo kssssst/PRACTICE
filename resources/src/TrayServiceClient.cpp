@@ -59,7 +59,7 @@ int StopServiceViaRPC()
     }
 
     __try {
-        StopService();
+        StopService(hBinding);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
@@ -86,7 +86,7 @@ int GetServiceStatusViaRPC(long *pStatus)
     }
 
     __try {
-        GetServiceStatus(pStatus);
+        GetServiceStatus(hBinding, pStatus);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }

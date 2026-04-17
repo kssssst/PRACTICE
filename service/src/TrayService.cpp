@@ -40,7 +40,7 @@ void LaunchAppInAllSessions();
 void TerminateAllApps();
 
 // Функции RPC stub - реализация интерфейса ITrayService
-error_status_t StopService(void)
+error_status_t StopService(handle_t hBinding)
 {
     if (g_hServiceStopEvent) {
         SetEvent(g_hServiceStopEvent);
@@ -48,7 +48,7 @@ error_status_t StopService(void)
     return RPC_S_OK;
 }
 
-error_status_t GetServiceStatus(long *status)
+error_status_t GetServiceStatus(handle_t hBinding, long *status)
 {
     if (status) {
         *status = (long)g_ServiceStatus.dwCurrentState;
