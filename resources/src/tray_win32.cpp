@@ -1,7 +1,9 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <cstdlib>
+#include <tlhelp32.h>
 #include "resource.h"
+#include "TrayServiceClient.h"
 
 #define WM_TRAYICON      (WM_USER + 1)
 #define ID_TRAY_EXIT     1001
@@ -19,6 +21,8 @@ void RemoveTrayIcon();
 void ShowContextMenu(HWND);
 void ShowMainWindow();
 void EnsureSingleInstance();
+DWORD GetParentProcessId(DWORD dwProcessId);
+int CheckServiceOnStartup();
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == g_uTaskbarRestart) {
@@ -40,6 +44,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         {
             UINT id = LOWORD(wParam);
             if (id == ID_FILE_EXIT || id == ID_TRAY_EXIT) {
+                if (StopServiceViaRPC() == 0) {
+                    Sleep(500); // Give service time to shutdown
+                }
                 RemoveTrayIcon();
                 PostQuitMessage(0);
             } else if (id == ID_TRAY_OPEN) {
@@ -69,6 +76,32 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_hInst = hInstance;
+    
+    // Check if parent process is the service
+    DWORD dwParent = GetParentProcessId(GetCurrentProcessId());
+    HANDLE hParentProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, dwParent);
+    if (hParentProcess) {
+        wchar_t szParentPath[MAX_PATH];
+        if (GetModuleFileNameExW(hParentProcess, NULL, szParentPath, MAX_PATH)) {
+            wchar_t *p = wcsrchr(szParentPath, L'\\');
+            if (!p || wcsicmp(p + 1, L"TrayService.exe") != 0) {
+                CloseHandle(hParentProcess);
+                exit(1); // Parent is not the service
+            }
+        }
+        CloseHandle(hParentProcess);
+    } else {
+        // If we can't verify, check if service is running
+        if (!IsServiceRunning()) {
+            exit(1); // Service is not running, exit
+        }
+    }
+    
+    // Check and start service if needed
+    if (!IsServiceRunning()) {
+        CheckAndStartService();
+    }
+    
     EnsureSingleInstance();
 
     WNDCLASSEXW wc = {};
@@ -145,4 +178,43 @@ void EnsureSingleInstance() {
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         exit(0);
     }
+}
+
+// Get parent process ID
+DWORD GetParentProcessId(DWORD dwProcessId)
+{
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE) return 0;
+
+    PROCESSENTRY32W pe32;
+    pe32.dwSize = sizeof(PROCESSENTRY32W);
+
+    if (!Process32FirstW(hSnapshot, &pe32)) {
+        CloseHandle(hSnapshot);
+        return 0;
+    }
+
+    do {
+        if (pe32.th32ProcessID == dwProcessId) {
+            CloseHandle(hSnapshot);
+            return pe32.th32ParentProcessID;
+        }
+    } while (Process32NextW(hSnapshot, &pe32));
+
+    CloseHandle(hSnapshot);
+    return 0;
+}
+
+// Check service on startup
+int CheckServiceOnStartup()
+{
+    if (IsServiceRunning()) {
+        return 1;
+    }
+
+    if (CheckAndStartService() == 0) {
+        return 1;
+    }
+
+    return 0;
 }
