@@ -2,8 +2,8 @@ name: Build TrayApp and TrayService
 
 on:
   push:
-    branches: [ main ]
   pull_request:
+    branches: [ main ]
 
 jobs:
   build:
