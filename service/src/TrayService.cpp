@@ -161,8 +161,8 @@ VOID WINAPI ServiceMain(DWORD, LPTSTR*) {
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
     g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
-    // Разрешаем только interrogate, не stop/shutdown
-    g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_INTERROGATE;
+    // Используем числовое значение SERVICE_ACCEPT_INTERROGATE = 0x00000080
+    g_ServiceStatus.dwControlsAccepted = 0x00000080;
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
     HANDLE hWorker = CreateThread(NULL, 0, ServiceWorkerThread, NULL, 0, NULL);
     if (hWorker) WaitForSingleObject(hWorker, INFINITE), CloseHandle(hWorker);
