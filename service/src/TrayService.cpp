@@ -22,16 +22,8 @@
 #define APP_PATH L"TrayApp.exe"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
-// UUID интерфейса (должен совпадать с IDL: 12345678-1234-1234-1234-123456789abc)
-const IID ITrayService_IID = {0x12345678,0x1234,0x1234,{0x12,0x34,0x56,0x78,0x9a,0xbc,0x00,0x00}};
-
-// Прототипы RPC-функций (реализация ниже)
-extern "C" error_status_t StopService(handle_t hBinding);
-extern "C" error_status_t GetServiceStatus(handle_t hBinding, long *status);
-
-// MIDL memory management
-void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes) { return malloc(cBytes); }
-void __RPC_USER MIDL_user_free(void __RPC_FAR * p) { free(p); }
+// Символ, генерируемый MIDL в TrayService_s.c
+extern RPC_IF_HANDLE ITrayService_v1_0_s_ifspec;
 
 // Глобальные переменные службы
 SERVICE_STATUS g_ServiceStatus = {0};
@@ -40,6 +32,7 @@ HANDLE g_hServiceStopEvent = NULL;
 std::map<DWORD, HANDLE> g_ProcessMap;
 CRITICAL_SECTION g_ProcessMapLock;
 
+// Прототипы
 void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
@@ -48,16 +41,22 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR *argv);
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl);
 
-// Реализация RPC-функций
-extern "C" error_status_t StopService(handle_t hBinding) {
+// Реализация RPC-функций (должна совпадать с IDL)
+extern "C" {
+error_status_t StopService(handle_t hBinding) {
     if (g_hServiceStopEvent) SetEvent(g_hServiceStopEvent);
     return RPC_S_OK;
 }
 
-extern "C" error_status_t GetServiceStatus(handle_t hBinding, long *status) {
+error_status_t GetServiceStatus(handle_t hBinding, long *status) {
     if (status) *status = (long)g_ServiceStatus.dwCurrentState;
     return RPC_S_OK;
 }
+}
+
+// MIDL memory management
+void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes) { return malloc(cBytes); }
+void __RPC_USER MIDL_user_free(void __RPC_FAR * p) { free(p); }
 
 void LaunchAppInSession(DWORD dwSessionId) {
     if (dwSessionId == 0) return;
@@ -136,6 +135,7 @@ DWORD WINAPI WTSNotificationThread(LPVOID) {
 }
 
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl) {
+    // Отключаем Stop и Shutdown – не обрабатываем
     if (dwCtrl == SERVICE_CONTROL_INTERROGATE)
         SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
 }
@@ -146,11 +146,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID) {
     
     RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", 10, (RPC_WSTR)ALPC_ENDPOINT, NULL);
     if (status == RPC_S_OK) {
-        // Регистрация интерфейса по UUID (не требует сгенерированного символа)
-        status = RpcServerRegisterIfEx(
-            NULL, (RPC_IF_ID*)&ITrayService_IID, NULL,
-            RPC_IF_ALLOW_CALLBACKS_WITH_NO_AUTH,
-            RPC_C_LISTEN_MAX_CALLS_DEFAULT, NULL);
+        status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, NULL, NULL);
     }
     if (status == RPC_S_OK) {
         status = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
@@ -158,7 +154,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID) {
     
     WaitForSingleObject(g_hServiceStopEvent, INFINITE);
     RpcMgmtStopServerListening(NULL);
-    RpcServerUnregisterIf(NULL, NULL, FALSE);
+    RpcServerUnregisterIf(ITrayService_v1_0_s_ifspec, NULL, FALSE);
     
     if (hWTSThread) {
         SetEvent(g_hServiceStopEvent);
