@@ -45,6 +45,11 @@ int StopServiceViaRPC()
         }
     }
 
+    RPC_STATUS status = RpcBindingSetObject(hBinding, NULL);
+    if (status != RPC_S_OK) {
+        return -1;
+    }
+
     __try {
         StopService();
     } __except (EXCEPTION_EXECUTE_HANDLER) {

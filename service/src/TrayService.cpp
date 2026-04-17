@@ -40,7 +40,9 @@ void TerminateAllApps();
 // RPC stub functions
 error_status_t StopService(void)
 {
-    SetEvent(g_hServiceStopEvent);
+    if (g_hServiceStopEvent) {
+        SetEvent(g_hServiceStopEvent);
+    }
     return RPC_S_OK;
 }
 
