@@ -1,0 +1,19 @@
+#include "winresource.h"
+
+STRINGTABLE
+BEGIN
+    1 "TrayApp"
+END
+
+1 VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ MASK 0x3f
+ VALUE "CompanyName", "TrayApp"
+ VALUE "FileDescription", "System Tray Application"
+ VALUE "FileVersion", "1.0.0.0"
+ VALUE "InternalName", "TrayApp"
+ VALUE "LegalCopyright", "Copyright 2026"
+ VALUE "OriginalFilename", "TrayApp.exe"
+ VALUE "ProductName", "TrayApp"
+ VALUE "ProductVersion", "1.0.0.0"
