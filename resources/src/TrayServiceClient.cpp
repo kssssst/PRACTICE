@@ -10,17 +10,15 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
 
-// Управление памятью MIDL для клиентского stub'а - должно быть extern "C" для совместимости с MIDL
-extern "C" {
-    void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
-    {
-        return malloc(cBytes);
-    }
+// Управление памятью MIDL для клиентского stub'а
+void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
+{
+    return malloc(cBytes);
+}
 
-    void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
-    {
-        free(p);
-    }
+void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
+{
+    free(p);
 }
 
 #define SERVICE_NAME L"TrayAppService"
@@ -60,14 +58,13 @@ int StopServiceViaRPC()
         }
     }
 
-    error_status_t status = RPC_S_OK;
     __try {
-        status = StopService(hBinding);
+        StopService();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
 
-    return status == RPC_S_OK ? 0 : (int)status;
+    return 0;
 }
 
 // Очистка RPC клиента
@@ -88,14 +85,13 @@ int GetServiceStatusViaRPC(long *pStatus)
         }
     }
 
-    error_status_t status = RPC_S_OK;
     __try {
-        status = GetServiceStatus(hBinding, pStatus);
+        GetServiceStatus(pStatus);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
 
-    return status == RPC_S_OK ? 0 : (int)status;
+    return 0;
 }
 
 // Проверка, запущен ли сервис

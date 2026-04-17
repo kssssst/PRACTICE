@@ -16,9 +16,6 @@
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "rpcrt4.lib")
 
-// Внешний дескриптор интерфейса из MIDL-сгенерированного кода
-extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
-
 #define SERVICE_NAME L"TrayAppService"
 #define APP_PATH L"TrayApp.exe"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
@@ -39,34 +36,30 @@ void LaunchAppInSession(DWORD dwSessionId);
 void LaunchAppInAllSessions();
 void TerminateAllApps();
 
-// Функции RPC stub - должны использовать extern "C" для совместимости с MIDL
-extern "C" {
-    error_status_t StopService(handle_t hBinding)
-    {
-        if (g_hServiceStopEvent) {
-            SetEvent(g_hServiceStopEvent);
-        }
-        return RPC_S_OK;
+// Функции RPC stub - реализация интерфейса ITrayService
+void StopService(void)
+{
+    if (g_hServiceStopEvent) {
+        SetEvent(g_hServiceStopEvent);
     }
+}
 
-    error_status_t GetServiceStatus(handle_t hBinding, long *status)
-    {
-        if (status) {
-            *status = (long)g_ServiceStatus.dwCurrentState;
-        }
-        return RPC_S_OK;
+void GetServiceStatus(long *status)
+{
+    if (status) {
+        *status = (long)g_ServiceStatus.dwCurrentState;
     }
+}
 
-    // Управление памятью MIDL
-    void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
-    {
-        return malloc(cBytes);
-    }
+// Управление памятью MIDL
+void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes)
+{
+    return malloc(cBytes);
+}
 
-    void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
-    {
-        free(p);
-    }
+void __RPC_USER MIDL_user_free(void __RPC_FAR * p)
+{
+    free(p);
 }
 
 // Получение ID родительского процесса

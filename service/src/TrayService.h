@@ -5,11 +5,10 @@
 extern "C" {
 #endif
 
-// RPC interface functions (implementation in TrayService.cpp)
-error_status_t StopService(void);
-error_status_t GetServiceStatus(long *status);
+// RPC interface functions (сгенерированы MIDL)
+// Объявления находятся в build/rpc/TrayService.h
 
-// Service handle will be declared by RPC generated code
+// Service interface handle
 extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
 
 #ifdef __cplusplus
