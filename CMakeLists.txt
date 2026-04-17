@@ -7,8 +7,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Статическое связывание Visual C++ Runtime
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Поддержка UTF-8 кодировки для MSVC компилятора
+add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
+add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
+
 # Включаем Resource Compiler для RC файлов
 enable_language(RC)
+set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 
 # Основной исполняемый файл
 add_executable(TrayApp WIN32 
