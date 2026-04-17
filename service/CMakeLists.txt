@@ -3,6 +3,11 @@ project(TrayService)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}")
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -14,9 +19,12 @@ file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
 
 add_custom_command(
     OUTPUT "${RPC_OUTPUT_DIR}/TrayService_s.c" "${RPC_OUTPUT_DIR}/TrayService.h"
-    COMMAND midl.exe /server stub /out "${RPC_OUTPUT_DIR}"
+    COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.acf"
+            /server stub /out "${RPC_OUTPUT_DIR}"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
+    DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.acf"
     COMMENT "Generating RPC server files from IDL"
 )
 

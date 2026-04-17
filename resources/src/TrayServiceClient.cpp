@@ -1,104 +1,285 @@
+#include "TrayServiceClient.h"
+
 #include <windows.h>
 #include <winsvc.h>
 #include <rpc.h>
 #include <rpcndr.h>
-#include <stdio.h>
+
 #include <cstdlib>
-#include <tlhelp32.h>
-#include <psapi.h>
-#include "TrayServiceClient.h"
+
+extern "C" {
+#include "TrayService.h"
+}
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "rpcrt4.lib")
-#pragma comment(lib, "psapi.lib")
 
-handle_t hBinding = NULL;
+namespace
+{
+constexpr wchar_t kServiceName[] = L"TrayAppService";
+constexpr wchar_t kRpcEndpoint[] = L"TrayServiceEndpoint";
 
-extern "C" {
-error_status_t StopService(handle_t hBinding);
-error_status_t GetServiceStatus(handle_t hBinding, long *status);
+handle_t g_bindingHandle = nullptr;
+
+bool QueryServiceStatusValue(SC_HANDLE serviceHandle, DWORD* currentState)
+{
+    if (currentState == nullptr)
+    {
+        return false;
+    }
+
+    SERVICE_STATUS_PROCESS status = {};
+    DWORD bytesNeeded = 0;
+    const BOOL ok = QueryServiceStatusEx(
+        serviceHandle,
+        SC_STATUS_PROCESS_INFO,
+        reinterpret_cast<LPBYTE>(&status),
+        sizeof(status),
+        &bytesNeeded);
+    if (!ok)
+    {
+        return false;
+    }
+
+    *currentState = status.dwCurrentState;
+    return true;
+}
+}  // namespace
+
+void* __RPC_USER MIDL_user_allocate(size_t bytes)
+{
+    return std::malloc(bytes);
 }
 
-void __RPC_FAR * __RPC_USER MIDL_user_allocate(size_t cBytes) { return malloc(cBytes); }
-void __RPC_USER MIDL_user_free(void __RPC_FAR * p) { free(p); }
-
-#define SERVICE_NAME L"TrayAppService"
-#define ALPC_ENDPOINT L"TrayServiceEndpoint"
-
-int InitializeRPCClient() {
-    RPC_WSTR pszStringBinding = NULL;
-    RPC_STATUS status = RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)ALPC_ENDPOINT, NULL, &pszStringBinding);
-    if (status) return -1;
-    status = RpcBindingFromStringBindingW(pszStringBinding, &hBinding);
-    RpcStringFreeW(&pszStringBinding);
-    return status ? -2 : 0;
+void __RPC_USER MIDL_user_free(void* memory)
+{
+    std::free(memory);
 }
 
-int StopServiceViaRPC() {
-    if (!hBinding && InitializeRPCClient() != 0) return -1;
-    __try { StopService(hBinding); } __except(EXCEPTION_EXECUTE_HANDLER) { return -1; }
+int InitializeRPCClient()
+{
+    if (g_bindingHandle != nullptr)
+    {
+        return 0;
+    }
+
+    RPC_WSTR stringBinding = nullptr;
+    RPC_STATUS status = RpcStringBindingComposeW(
+        nullptr,
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
+        nullptr,
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(kRpcEndpoint)),
+        nullptr,
+        &stringBinding);
+    if (status != RPC_S_OK)
+    {
+        return -1;
+    }
+
+    status = RpcBindingFromStringBindingW(stringBinding, &g_bindingHandle);
+    RpcStringFreeW(&stringBinding);
+    if (status != RPC_S_OK)
+    {
+        return -2;
+    }
+
+    TrayServiceBinding = g_bindingHandle;
     return 0;
 }
 
-int GetServiceStatusViaRPC(long *pStatus) {
-    if (!pStatus) return -1;
-    if (!hBinding && InitializeRPCClient() != 0) return -1;
-    __try { GetServiceStatus(hBinding, pStatus); } __except(EXCEPTION_EXECUTE_HANDLER) { return -1; }
+int StopServiceViaRPC()
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    __try
+    {
+        StopService();
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
     return 0;
 }
 
-void CleanupRPCClient() {
-    if (hBinding) RpcBindingFree(&hBinding), hBinding = NULL;
-}
+int GetServiceStatusViaRPC(long* status)
+{
+    if (status == nullptr)
+    {
+        return -1;
+    }
 
-int IsServiceRunning() {
-    SC_HANDLE hSC = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!hSC) return 0;
-    SC_HANDLE hSvc = OpenServiceW(hSC, SERVICE_NAME, SERVICE_QUERY_STATUS);
-    if (!hSvc) { CloseServiceHandle(hSC); return 0; }
-    SERVICE_STATUS ss = {0};
-    BOOL ok = QueryServiceStatus(hSvc, &ss);
-    CloseServiceHandle(hSvc);
-    CloseServiceHandle(hSC);
-    return ok && ss.dwCurrentState == SERVICE_RUNNING;
-}
+    if (InitializeRPCClient() != 0)
+    {
+        return -2;
+    }
 
-int CheckAndStartService() {
-    if (IsServiceRunning()) return 0;
-    SC_HANDLE hSC = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!hSC) return -1;
-    SC_HANDLE hSvc = OpenServiceW(hSC, SERVICE_NAME, SERVICE_START | SERVICE_QUERY_STATUS);
-    if (!hSvc) { CloseServiceHandle(hSC); return -2; }
-    if (!StartServiceW(hSvc, 0, NULL)) {
-        CloseServiceHandle(hSvc);
-        CloseServiceHandle(hSC);
+    __try
+    {
+        GetServiceStatus(status);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return -3;
     }
-    for (int i = 0; i < 30; ++i) {
-        Sleep(1000);
-        SERVICE_STATUS ss = {0};
-        if (QueryServiceStatus(hSvc, &ss) && ss.dwCurrentState == SERVICE_RUNNING) {
-            CloseServiceHandle(hSvc);
-            CloseServiceHandle(hSC);
-            return 0;
-        }
-    }
-    CloseServiceHandle(hSvc);
-    CloseServiceHandle(hSC);
-    return -4;
+
+    return 0;
 }
 
-DWORD GetParentProcessIdW(DWORD dwProcessId) {
-    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnap == INVALID_HANDLE_VALUE) return 0;
-    PROCESSENTRY32W pe = { sizeof(PROCESSENTRY32W) };
-    if (Process32FirstW(hSnap, &pe)) {
-        do if (pe.th32ProcessID == dwProcessId) {
-            DWORD pid = pe.th32ParentProcessID;
-            CloseHandle(hSnap);
-            return pid;
-        } while (Process32NextW(hSnap, &pe));
+void CleanupRPCClient()
+{
+    if (g_bindingHandle != nullptr)
+    {
+        RpcBindingFree(&g_bindingHandle);
+        g_bindingHandle = nullptr;
+        TrayServiceBinding = nullptr;
     }
-    CloseHandle(hSnap);
-    return 0;
+}
+
+int IsServiceRunning()
+{
+    SC_HANDLE scmHandle = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scmHandle == nullptr)
+    {
+        return 0;
+    }
+
+    SC_HANDLE serviceHandle = OpenServiceW(scmHandle, kServiceName, SERVICE_QUERY_STATUS);
+    if (serviceHandle == nullptr)
+    {
+        CloseServiceHandle(scmHandle);
+        return 0;
+    }
+
+    DWORD currentState = SERVICE_STOPPED;
+    const bool ok = QueryServiceStatusValue(serviceHandle, &currentState);
+
+    CloseServiceHandle(serviceHandle);
+    CloseServiceHandle(scmHandle);
+    return ok && currentState == SERVICE_RUNNING;
+}
+
+int WaitForServiceState(DWORD expectedState, DWORD timeoutMs)
+{
+    SC_HANDLE scmHandle = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scmHandle == nullptr)
+    {
+        return -1;
+    }
+
+    SC_HANDLE serviceHandle = OpenServiceW(scmHandle, kServiceName, SERVICE_QUERY_STATUS);
+    if (serviceHandle == nullptr)
+    {
+        CloseServiceHandle(scmHandle);
+        return -2;
+    }
+
+    const DWORD startTick = GetTickCount();
+    for (;;)
+    {
+        DWORD currentState = SERVICE_STOPPED;
+        if (!QueryServiceStatusValue(serviceHandle, &currentState))
+        {
+            CloseServiceHandle(serviceHandle);
+            CloseServiceHandle(scmHandle);
+            return -3;
+        }
+
+        if (currentState == expectedState)
+        {
+            CloseServiceHandle(serviceHandle);
+            CloseServiceHandle(scmHandle);
+            return 0;
+        }
+
+        if (GetTickCount() - startTick >= timeoutMs)
+        {
+            CloseServiceHandle(serviceHandle);
+            CloseServiceHandle(scmHandle);
+            return -4;
+        }
+
+        Sleep(250);
+    }
+}
+
+int CheckAndStartService()
+{
+    SC_HANDLE scmHandle = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scmHandle == nullptr)
+    {
+        return -1;
+    }
+
+    SC_HANDLE serviceHandle = OpenServiceW(
+        scmHandle,
+        kServiceName,
+        SERVICE_QUERY_STATUS);
+    if (serviceHandle == nullptr)
+    {
+        CloseServiceHandle(scmHandle);
+        return -2;
+    }
+
+    DWORD currentState = SERVICE_STOPPED;
+    if (!QueryServiceStatusValue(serviceHandle, &currentState))
+    {
+        CloseServiceHandle(serviceHandle);
+        CloseServiceHandle(scmHandle);
+        return -3;
+    }
+
+    if (currentState == SERVICE_RUNNING)
+    {
+        CloseServiceHandle(serviceHandle);
+        CloseServiceHandle(scmHandle);
+        return 0;
+    }
+
+    if (currentState == SERVICE_STOP_PENDING)
+    {
+        CloseServiceHandle(serviceHandle);
+        CloseServiceHandle(scmHandle);
+        return -4;
+    }
+
+    if (currentState != SERVICE_START_PENDING)
+    {
+        CloseServiceHandle(serviceHandle);
+        serviceHandle = OpenServiceW(
+            scmHandle,
+            kServiceName,
+            SERVICE_START | SERVICE_QUERY_STATUS);
+        if (serviceHandle == nullptr)
+        {
+            CloseServiceHandle(scmHandle);
+            return GetLastError() == ERROR_ACCESS_DENIED ? -6 : -5;
+        }
+
+        if (!StartServiceW(serviceHandle, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)
+        {
+            CloseServiceHandle(serviceHandle);
+            CloseServiceHandle(scmHandle);
+            return GetLastError() == ERROR_ACCESS_DENIED ? -6 : -5;
+        }
+    }
+
+    CloseServiceHandle(serviceHandle);
+    CloseServiceHandle(scmHandle);
+    return WaitForServiceState(SERVICE_RUNNING, 30000);
+}
+
+int RequestServiceStopAndWait()
+{
+    const int rpcResult = StopServiceViaRPC();
+    if (rpcResult != 0)
+    {
+        return rpcResult;
+    }
+
+    return WaitForServiceState(SERVICE_STOPPED, 30000);
 }

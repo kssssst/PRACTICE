@@ -1,7 +1,9 @@
 @echo off
 sc query TrayAppService >nul 2>&1
 if %errorlevel%==0 (
-    net stop TrayAppService
+    if exist "%~dp0build\TrayApp.exe" (
+        "%~dp0build\TrayApp.exe" /stopservice
+    )
     sc delete TrayAppService
     echo Service removed.
 ) else echo Service not found.
