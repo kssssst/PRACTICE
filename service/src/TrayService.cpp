@@ -1,4 +1,5 @@
-#define _WIN32_WINNT 0x0601   // для SERVICE_ACCEPT_INTERROGATE
+#define _WIN32_WINNT 0x0601
+#define WINVER 0x0601
 
 #include <windows.h>
 #include <wtsapi32.h>
@@ -129,7 +130,6 @@ DWORD WINAPI WTSNotificationThread(LPVOID) {
 }
 
 VOID WINAPI ServiceCtrlHandler(DWORD dwCtrl) {
-    // Отключаем Stop и Shutdown
     if (dwCtrl == SERVICE_CONTROL_INTERROGATE)
         SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
 }
@@ -161,6 +161,7 @@ VOID WINAPI ServiceMain(DWORD, LPTSTR*) {
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
     g_hServiceStopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+    // Разрешаем только interrogate, не stop/shutdown
     g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_INTERROGATE;
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);
     HANDLE hWorker = CreateThread(NULL, 0, ServiceWorkerThread, NULL, 0, NULL);
