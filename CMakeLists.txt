@@ -13,15 +13,23 @@ add_executable(TrayApp WIN32
     TrayApp.rc
 )
 
+# Определения для компилятора C++
 target_compile_definitions(TrayApp PRIVATE 
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
 )
 
+# Включаемые директории
+target_include_directories(TrayApp PRIVATE
+    ${CMAKE_SOURCE_DIR}/resources/src
+)
+
+# Связываемые библиотеки
 target_link_libraries(TrayApp PRIVATE
     shell32 user32 gdi32 comctl32
 )
 
-# Установка выходной директории
+# Свойства целевого приложения
 set_target_properties(TrayApp PROPERTIES
     VS_EXECUTABLE_SUBSYSTEM WIN32
+    WIN32_EXECUTABLE ON
 )
