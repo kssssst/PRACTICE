@@ -20,6 +20,9 @@
 #define APP_PATH L"TrayApp.exe"
 #define ALPC_ENDPOINT L"TrayServiceEndpoint"
 
+// Внешний дескриптор интерфейса RPC (генерируется MIDL)
+extern RPC_IF_HANDLE ITrayService_ServerIfHandle;
+
 // Глобальные переменные
 SERVICE_STATUS g_ServiceStatus = { 0 };
 SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
@@ -37,14 +40,14 @@ void LaunchAppInAllSessions();
 void TerminateAllApps();
 
 // Функции RPC stub - реализация интерфейса ITrayService
-void StopService(void)
+void StopService(handle_t hBinding)
 {
     if (g_hServiceStopEvent) {
         SetEvent(g_hServiceStopEvent);
     }
 }
 
-void GetServiceStatus(long *status)
+void GetServiceStatus(handle_t hBinding, long *status)
 {
     if (status) {
         *status = (long)g_ServiceStatus.dwCurrentState;
