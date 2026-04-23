@@ -61,7 +61,7 @@ jobs:
       
     - name: Upload TrayApp Artifact
       if: success()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: TrayApp
         path: build/Release/TrayApp.exe
@@ -69,7 +69,7 @@ jobs:
         
     - name: Upload TrayService Artifact
       if: success()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: TrayService
         path: build/service/Release/TrayService.exe
@@ -90,7 +90,7 @@ jobs:
       
     - name: Upload Release Package
       if: success()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: TrayApp-Complete-Package
         path: release_package/
@@ -98,7 +98,7 @@ jobs:
         
     - name: Upload Debug Artifacts
       if: matrix.config == 'Debug'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: TrayApp-${{ matrix.config }}
         path: build/Debug/TrayApp.exe
