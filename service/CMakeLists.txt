@@ -14,19 +14,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-set(RPC_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc")
-file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
-
-add_custom_command(
-    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_s.c" "${RPC_OUTPUT_DIR}/TrayService.h"
-    COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.acf"
-            /out "${RPC_OUTPUT_DIR}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
-    DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.acf"
-    COMMENT "Generating RPC server files from IDL"
-)
+set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
 
 add_executable(TrayService
     src/TrayService.cpp

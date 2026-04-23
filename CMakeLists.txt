@@ -21,13 +21,15 @@ enable_language(RC)
 set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 
 # Генерация RPC клиентского кода
-set(RPC_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc")
+set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
 file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
 
 add_custom_command(
-    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
+    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService_s.c" "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
-            /out "${RPC_OUTPUT_DIR}"
+            /cstub "${RPC_OUTPUT_DIR}/TrayService_c.c"
+            /sstub "${RPC_OUTPUT_DIR}/TrayService_s.c"
+            /header "${RPC_OUTPUT_DIR}/TrayService.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
     DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
