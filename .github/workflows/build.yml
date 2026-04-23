@@ -50,9 +50,9 @@ jobs:
         }
         
         echo "Checking for TrayService.exe..."
-        if (Test-Path "build\service\Release\TrayService.exe") {
+        if (Test-Path "build\Release\TrayService.exe") {
           Write-Host "✓ TrayService.exe found"
-          Get-Item build\service\Release\TrayService.exe | Select-Object FullName, Length
+          Get-Item build\Release\TrayService.exe | Select-Object FullName, Length
         } else {
           Write-Error "TrayService.exe not found!"
           exit 1
@@ -72,7 +72,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: TrayService
-        path: build/service/Release/TrayService.exe
+        path: build/Release/TrayService.exe
         retention-days: 90
         
     - name: Create Release Package
@@ -80,7 +80,7 @@ jobs:
       run: |
         mkdir -p release_package
         copy build\Release\TrayApp.exe release_package\
-        copy build\service\Release\TrayService.exe release_package\
+        copy build\Release\TrayService.exe release_package\
         copy install_service.bat release_package\
         copy uninstall_service.bat release_package\
         copy README.md release_package\
