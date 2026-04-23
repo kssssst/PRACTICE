@@ -15,8 +15,8 @@ if %errorlevel% neq 0 (
 
 REM Get the directory where this script is located
 set SCRIPT_DIR=%~dp0
-set SERVICE_PATH=%SCRIPT_DIR%TrayService.exe
-set APP_PATH=%SCRIPT_DIR%TrayApp.exe
+set SERVICE_PATH=%SCRIPT_DIR%build\service\Release\TrayService.exe
+set APP_PATH=%SCRIPT_DIR%build\Release\TrayApp.exe
 
 echo.
 echo ========================================
@@ -32,7 +32,7 @@ if not exist "%SERVICE_PATH%" (
     echo Please build the project first:
     echo   mkdir build
     echo   cd build
-    echo   cmake -G "Visual Studio 17 2022" -A ARM64 ..
+    echo   cmake -G "Visual Studio 16 2019" -A x64 ..
     echo   cmake --build . --config Release
     pause
     exit /b 1

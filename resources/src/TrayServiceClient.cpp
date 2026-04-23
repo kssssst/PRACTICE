@@ -218,7 +218,7 @@ int CheckAndStartService()
     SC_HANDLE serviceHandle = OpenServiceW(
         scmHandle,
         kServiceName,
-        SERVICE_QUERY_STATUS);
+        SERVICE_START | SERVICE_QUERY_STATUS);
     if (serviceHandle == nullptr)
     {
         CloseServiceHandle(scmHandle);
@@ -249,22 +249,11 @@ int CheckAndStartService()
 
     if (currentState != SERVICE_START_PENDING)
     {
-        CloseServiceHandle(serviceHandle);
-        serviceHandle = OpenServiceW(
-            scmHandle,
-            kServiceName,
-            SERVICE_START | SERVICE_QUERY_STATUS);
-        if (serviceHandle == nullptr)
-        {
-            CloseServiceHandle(scmHandle);
-            return GetLastError() == ERROR_ACCESS_DENIED ? -6 : -5;
-        }
-
         if (!StartServiceW(serviceHandle, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)
         {
             CloseServiceHandle(serviceHandle);
             CloseServiceHandle(scmHandle);
-            return GetLastError() == ERROR_ACCESS_DENIED ? -6 : -5;
+            return -5;
         }
     }
 

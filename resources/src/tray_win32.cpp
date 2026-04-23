@@ -167,38 +167,6 @@ bool ShouldStopServiceOnly(LPCWSTR commandLine)
     return commandLine != nullptr && wcsstr(commandLine, L"/stopservice") != nullptr;
 }
 
-void ShowServiceStartupError(int startResult)
-{
-    const wchar_t* message = L"Не удалось запустить службу TrayAppService или дождаться состояния Running.";
-
-    switch (startResult)
-    {
-    case -2:
-        message =
-            L"Служба TrayAppService не установлена.\n"
-            L"Сначала установите ее через install_service.bat от имени администратора.";
-        break;
-
-    case -5:
-        message =
-            L"Не удалось запустить службу TrayAppService.\n"
-            L"Запустите install_service.bat или TrayApp.exe от имени администратора.";
-        break;
-
-    case -6:
-        message =
-            L"Служба TrayAppService установлена, но текущему пользователю не хватает прав для ее запуска.\n"
-            L"Если служба уже запущена, закройте это сообщение и дождитесь запуска TrayApp из службы.\n"
-            L"Если служба остановлена, запустите TrayApp.exe или install_service.bat от имени администратора.";
-        break;
-
-    default:
-        break;
-    }
-
-    MessageBoxW(nullptr, message, L"Ошибка", MB_OK | MB_ICONERROR);
-}
-
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == g_taskbarRestartMessage)
@@ -279,7 +247,11 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
     const int startResult = CheckAndStartService();
     if (startResult != 0)
     {
-        ShowServiceStartupError(startResult);
+        MessageBoxW(
+            nullptr,
+            L"Не удалось запустить службу TrayAppService или дождаться состояния Running.",
+            L"Ошибка",
+            MB_OK | MB_ICONERROR);
         return 1;
     }
 
