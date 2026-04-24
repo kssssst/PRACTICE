@@ -22,26 +22,18 @@ set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 
 # Генерация RPC клиентского кода
 set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
-file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
+file(MAKE_DIRECTORY("${RPC_OUTPUT_DIR}"))
 
 add_custom_command(
-    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService_s.c" "${RPC_OUTPUT_DIR}/TrayService.h"
+    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
-            /cstub "${RPC_OUTPUT_DIR}/TrayService_c.c"
-            /sstub "${RPC_OUTPUT_DIR}/TrayService_s.c"
+            /client "${RPC_OUTPUT_DIR}/TrayService_c.c"
             /header "${RPC_OUTPUT_DIR}/TrayService.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
     DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
     COMMENT "Generating RPC client files from IDL"
-)
-
-# Создаем отдельный target для MIDL генерации
-add_custom_target(GenerateRpcFiles DEPENDS 
-    "${RPC_OUTPUT_DIR}/TrayService_c.c" 
-    "${RPC_OUTPUT_DIR}/TrayService_s.c" 
-    "${RPC_OUTPUT_DIR}/TrayService.h"
 )
 
 # Исполняемый файл графического приложения
@@ -51,9 +43,6 @@ add_executable(TrayApp WIN32
     "${RPC_OUTPUT_DIR}/TrayService_c.c"
     TrayApp.rc
 )
-
-# Добавляем зависимость от генерации MIDL файлов
-add_dependencies(TrayApp GenerateRpcFiles)
 
 target_compile_definitions(TrayApp PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
@@ -75,3 +64,6 @@ set_target_properties(TrayApp PROPERTIES
 
 # Добавляем проект службы как поддиректорию
 add_subdirectory(service)
+
+# TrayApp зависит от TrayService для генерации MIDL файлов
+add_dependencies(TrayApp TrayService)
