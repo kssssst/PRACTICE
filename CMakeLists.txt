@@ -20,20 +20,39 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 enable_language(RC)
 set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 
-# Генерация RPC клиентского кода
+# Генерация RPC клиентского и серверного кода
 set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
 file(MAKE_DIRECTORY("${RPC_OUTPUT_DIR}"))
 
 add_custom_command(
-    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
+    OUTPUT
+        "${RPC_OUTPUT_DIR}/TrayService_c.c"
+        "${RPC_OUTPUT_DIR}/TrayService_s.c"
+        "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
             /cstub "${RPC_OUTPUT_DIR}/TrayService_c.c"
+            /sstub "${RPC_OUTPUT_DIR}/TrayService_s.c"
             /header "${RPC_OUTPUT_DIR}/TrayService.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
     DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
-    COMMENT "Generating RPC client files from IDL"
+    COMMENT "Generating RPC files from IDL"
+    VERBATIM
+)
+
+add_custom_target(GenerateRpcFiles
+    DEPENDS
+        "${RPC_OUTPUT_DIR}/TrayService_c.c"
+        "${RPC_OUTPUT_DIR}/TrayService_s.c"
+        "${RPC_OUTPUT_DIR}/TrayService.h"
+)
+
+set_source_files_properties(
+    "${RPC_OUTPUT_DIR}/TrayService_c.c"
+    "${RPC_OUTPUT_DIR}/TrayService_s.c"
+    "${RPC_OUTPUT_DIR}/TrayService.h"
+    PROPERTIES GENERATED TRUE
 )
 
 # Исполняемый файл графического приложения
@@ -57,6 +76,8 @@ target_link_libraries(TrayApp PRIVATE
     shell32 user32 gdi32 comctl32 rpcrt4 advapi32 psapi
 )
 
+add_dependencies(TrayApp GenerateRpcFiles)
+
 set_target_properties(TrayApp PROPERTIES
     VS_EXECUTABLE_SUBSYSTEM WIN32
     WIN32_EXECUTABLE ON
@@ -64,6 +85,3 @@ set_target_properties(TrayApp PROPERTIES
 
 # Добавляем проект службы как поддиректорию
 add_subdirectory(service)
-
-# TrayApp зависит от TrayService для генерации MIDL файлов
-add_dependencies(TrayApp TrayService)

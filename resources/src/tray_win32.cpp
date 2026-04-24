@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
+#include <winsvc.h>
 
 #include "resource.h"
 #include "TrayServiceClient.h"
@@ -17,7 +18,7 @@ constexpr UINT kTrayOpenId = 1002;
 constexpr UINT kFileExitId = 2001;
 constexpr wchar_t kWindowClassName[] = L"TrayAppWin32Class";
 constexpr wchar_t kWindowTitle[] = L"Tray Application";
-constexpr wchar_t kServiceProcessName[] = L"TrayService.exe";
+constexpr wchar_t kServiceName[] = L"TrayAppService";
 
 HINSTANCE g_instanceHandle = nullptr;
 HWND g_mainWindow = nullptr;
@@ -54,6 +55,47 @@ DWORD GetParentProcessId(DWORD processId)
     return parentProcessId;
 }
 
+bool GetRunningServiceProcessId(DWORD* serviceProcessId)
+{
+    if (serviceProcessId == nullptr)
+    {
+        return false;
+    }
+
+    SC_HANDLE scmHandle = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scmHandle == nullptr)
+    {
+        return false;
+    }
+
+    SC_HANDLE serviceHandle = OpenServiceW(scmHandle, kServiceName, SERVICE_QUERY_STATUS);
+    if (serviceHandle == nullptr)
+    {
+        CloseServiceHandle(scmHandle);
+        return false;
+    }
+
+    SERVICE_STATUS_PROCESS status = {};
+    DWORD bytesNeeded = 0;
+    const BOOL ok = QueryServiceStatusEx(
+        serviceHandle,
+        SC_STATUS_PROCESS_INFO,
+        reinterpret_cast<LPBYTE>(&status),
+        sizeof(status),
+        &bytesNeeded);
+
+    CloseServiceHandle(serviceHandle);
+    CloseServiceHandle(scmHandle);
+
+    if (!ok || status.dwCurrentState != SERVICE_RUNNING || status.dwProcessId == 0)
+    {
+        return false;
+    }
+
+    *serviceProcessId = status.dwProcessId;
+    return true;
+}
+
 bool IsServiceParentProcess()
 {
     const DWORD parentProcessId = GetParentProcessId(GetCurrentProcessId());
@@ -62,25 +104,8 @@ bool IsServiceParentProcess()
         return false;
     }
 
-    HANDLE parentHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parentProcessId);
-    if (parentHandle == nullptr)
-    {
-        return false;
-    }
-
-    wchar_t processPath[MAX_PATH] = {};
-    DWORD pathLength = MAX_PATH;
-    const BOOL ok = QueryFullProcessImageNameW(parentHandle, 0, processPath, &pathLength);
-    CloseHandle(parentHandle);
-
-    if (!ok)
-    {
-        return false;
-    }
-
-    const wchar_t* fileName = wcsrchr(processPath, L'\\');
-    fileName = (fileName == nullptr) ? processPath : fileName + 1;
-    return _wcsicmp(fileName, kServiceProcessName) == 0;
+    DWORD serviceProcessId = 0;
+    return GetRunningServiceProcessId(&serviceProcessId) && parentProcessId == serviceProcessId;
 }
 
 void AddTrayIcon()

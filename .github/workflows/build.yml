@@ -11,124 +11,53 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install CMake
-      run: |
-        choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-      shell: powershell
-        
-    - name: Create build directory
-      run: |
-        mkdir build
-      shell: powershell
       
     - name: Configure CMake
       run: |
-        cd build
-        cmake .. -G "Visual Studio 17 2022" -A ARM64
+        cmake -S . -B build -G "Visual Studio 17 2022" -A ARM64
       shell: powershell
     
-    - name: Build TrayService first
+    - name: Build
       run: |
-        cd build
-        cmake --build . --config Release --target TrayService
+        cmake --build build --config Release
       shell: powershell
       
-    - name: Check MIDL files generated
+    - name: Verify generated files and binaries
       run: |
         echo 'Checking for generated MIDL files...'
-        if (Test-Path 'build\rpc\TrayService.h') {
-          Write-Host '✓ TrayService.h found'
-        } else {
-          Write-Error 'TrayService.h not found!'
-          exit 1
-        }
-        if (Test-Path 'build\rpc\TrayService_c.c') {
-          Write-Host '✓ TrayService_c.c found'
-        } else {
-          Write-Error 'TrayService_c.c not found!'
-          exit 1
-        }
-        if (Test-Path 'build\rpc\TrayService_s.c') {
-          Write-Host '✓ TrayService_s.c found'
-        } else {
-          Write-Error 'TrayService_s.c not found!'
-          exit 1
-        }
-      shell: powershell
-      
-    - name: Build TrayApp
-      run: |
-        cd build
-        cmake --build . --config Release --target TrayApp
-      shell: powershell
-      
-    - name: Verify Build Artifacts
-      run: |
-        $trayAppCandidates = @('build\Release\TrayApp.exe', 'build\TrayApp.exe')
-        $trayAppPath = $trayAppCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $trayAppPath) {
-          Write-Error 'TrayApp.exe not found!'
-          exit 1
-        }
-        Write-Host "✓ TrayApp.exe found at $trayAppPath"
-        Get-Item $trayAppPath | Select-Object FullName, Length
+        $requiredFiles = @(
+          'build\rpc\TrayService.h',
+          'build\rpc\TrayService_c.c',
+          'build\rpc\TrayService_s.c',
+          'build\TrayApp.exe',
+          'build\TrayService.exe'
+        )
 
-        $trayServiceCandidates = @('build\Release\TrayService.exe', 'build\TrayService.exe')
-        $trayServicePath = $trayServiceCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $trayServicePath) {
-          Write-Error 'TrayService.exe not found!'
-          exit 1
+        foreach ($file in $requiredFiles) {
+          if (-not (Test-Path $file)) {
+            Write-Error "$file not found!"
+            exit 1
+          }
+          Write-Host "Found $file"
         }
-        Write-Host "✓ TrayService.exe found at $trayServicePath"
-        Get-Item $trayServicePath | Select-Object FullName, Length
+
+        Get-Item build\TrayApp.exe, build\TrayService.exe | Select-Object FullName, Length
+      shell: powershell
+
+    - name: Create TrayApp package
+      if: success()
+      run: |
+        New-Item -ItemType Directory -Force -Path TrayApp | Out-Null
+        Copy-Item build\TrayApp.exe TrayApp\
+        Copy-Item build\TrayService.exe TrayApp\
+        Copy-Item install_service.bat TrayApp\
+        Copy-Item uninstall_service.bat TrayApp\
       shell: powershell
       
-    - name: Upload TrayApp Artifact
+    - name: Upload TrayApp package
       if: success()
       uses: actions/upload-artifact@v4
       with:
         name: TrayApp
-        path: |
-          build/Release/TrayApp.exe
-          build/TrayApp.exe
+        path: TrayApp/
         retention-days: 90
-        
-    - name: Upload TrayService Artifact
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: TrayService
-        path: |
-          build/Release/TrayService.exe
-          build/TrayService.exe
-        retention-days: 90
-        
-    - name: Create Release Package
-      if: success()
-      run: |
-        New-Item -ItemType Directory -Force -Path release_package | Out-Null
-        if (Test-Path 'build\Release\TrayApp.exe') { copy 'build\Release\TrayApp.exe' release_package\ } elseif (Test-Path 'build\TrayApp.exe') { copy 'build\TrayApp.exe' release_package\ } else { Write-Error 'TrayApp.exe not found for release package'; exit 1 }
-        if (Test-Path 'build\Release\TrayService.exe') { copy 'build\Release\TrayService.exe' release_package\ } elseif (Test-Path 'build\TrayService.exe') { copy 'build\TrayService.exe' release_package\ } else { Write-Error 'TrayService.exe not found for release package'; exit 1 }
-        copy install_service.bat release_package\
-        copy uninstall_service.bat release_package\
-        copy README.md release_package\
-        copy BUILD.md release_package\
-        copy IMPLEMENTATION_GUIDE.md release_package\
-      shell: powershell
-      
-    - name: Upload Release Package
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: TrayApp-Complete-Package
-        path: release_package/
-        retention-days: 90
-        
-    - name: Upload Debug Artifacts
-      if: matrix.config == 'Debug'
-      uses: actions/upload-artifact@v4
-      with:
-        name: TrayApp-${{ matrix.config }}
-        path: build/Debug/TrayApp.exe
-        retention-days: 7
