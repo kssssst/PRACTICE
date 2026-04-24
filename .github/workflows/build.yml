@@ -74,17 +74,7 @@ jobs:
         Write-Host "✓ TrayApp.exe found at $trayAppPath"
         Get-Item $trayAppPath | Select-Object FullName, Length
 
-        $trayServiceCandidates = @('build\Release\TrayService.exe', 'build\TrayService.exe')
-        $trayServicePath = $trayServiceCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $trayServicePath) {
-          Write-Error 'TrayService.exe not found!'
-          exit 1
-        }
-        Write-Host "✓ TrayService.exe found at $trayServicePath"
-        Get-Item $trayServicePath | Select-Object FullName, Length
-      shell: powershell
-      
-    - name: Upload TrayApp Artifact
+        $trayServiceCandidates = @('build\service\Release\TrayService.exe', 'build\service\TrayService.exe', 'build\Release\TrayService.exe', 'build\TrayService.exe')
       if: success()
       uses: actions/upload-artifact@v4
       with:
@@ -100,6 +90,8 @@ jobs:
       with:
         name: TrayService
         path: |
+          build/service/Release/TrayService.exe
+          build/service/TrayService.exe
           build/Release/TrayService.exe
           build/TrayService.exe
         retention-days: 90
@@ -109,7 +101,7 @@ jobs:
       run: |
         New-Item -ItemType Directory -Force -Path release_package | Out-Null
         if (Test-Path 'build\Release\TrayApp.exe') { copy 'build\Release\TrayApp.exe' release_package\ } elseif (Test-Path 'build\TrayApp.exe') { copy 'build\TrayApp.exe' release_package\ } else { Write-Error 'TrayApp.exe not found for release package'; exit 1 }
-        if (Test-Path 'build\Release\TrayService.exe') { copy 'build\Release\TrayService.exe' release_package\ } elseif (Test-Path 'build\TrayService.exe') { copy 'build\TrayService.exe' release_package\ } else { Write-Error 'TrayService.exe not found for release package'; exit 1 }
+        if (Test-Path 'build\service\Release\TrayService.exe') { copy 'build\service\Release\TrayService.exe' release_package\ } elseif (Test-Path 'build\service\TrayService.exe') { copy 'build\service\TrayService.exe' release_package\ } elseif (Test-Path 'build\Release\TrayService.exe') { copy 'build\Release\TrayService.exe' release_package\ } elseif (Test-Path 'build\TrayService.exe') { copy 'build\TrayService.exe' release_package\ } else { Write-Error 'TrayService.exe not found for release package'; exit 1 }
         copy install_service.bat release_package\
         copy uninstall_service.bat release_package\
         copy README.md release_package\
