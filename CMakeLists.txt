@@ -27,7 +27,7 @@ file(MAKE_DIRECTORY("${RPC_OUTPUT_DIR}"))
 add_custom_command(
     OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
-            /client "${RPC_OUTPUT_DIR}/TrayService_c.c"
+            /cstub "${RPC_OUTPUT_DIR}/TrayService_c.c"
             /header "${RPC_OUTPUT_DIR}/TrayService.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
     DEPENDS
