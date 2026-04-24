@@ -36,23 +36,23 @@ jobs:
       
     - name: Check MIDL files generated
       run: |
-        echo "Checking for generated MIDL files..."
-        if (Test-Path "build\rpc\TrayService.h") {
-          Write-Host "✓ TrayService.h found"
+        echo 'Checking for generated MIDL files...'
+        if (Test-Path 'build\rpc\TrayService.h') {
+          Write-Host '✓ TrayService.h found'
         } else {
-          Write-Error "TrayService.h not found!"
+          Write-Error 'TrayService.h not found!'
           exit 1
         }
-        if (Test-Path "build\rpc\TrayService_c.c") {
-          Write-Host "✓ TrayService_c.c found"
+        if (Test-Path 'build\rpc\TrayService_c.c') {
+          Write-Host '✓ TrayService_c.c found'
         } else {
-          Write-Error "TrayService_c.c not found!"
+          Write-Error 'TrayService_c.c not found!'
           exit 1
         }
-        if (Test-Path "build\rpc\TrayService_s.c") {
-          Write-Host "✓ TrayService_s.c found"
+        if (Test-Path 'build\rpc\TrayService_s.c') {
+          Write-Host '✓ TrayService_s.c found'
         } else {
-          Write-Error "TrayService_s.c not found!"
+          Write-Error 'TrayService_s.c not found!'
           exit 1
         }
       shell: powershell
@@ -65,42 +65,21 @@ jobs:
       
     - name: Verify Build Artifacts
       run: |
-        echo "Checking for TrayApp.exe..."
-        if (Test-Path "build\Release\TrayApp.exe") {
-          Write-Host "✓ TrayApp.exe found"
+        echo 'Checking for TrayApp.exe...'
+        if (Test-Path 'build\Release\TrayApp.exe') {
+          Write-Host '✓ TrayApp.exe found'
           Get-Item build\Release\TrayApp.exe | Select-Object FullName, Length
         } else {
-          Write-Error "TrayApp.exe not found!"
+          Write-Error 'TrayApp.exe not found!'
           exit 1
         }
         
-        echo "Checking for TrayService.exe..."
-        if (Test-Path "build\Release\TrayService.exe") {
-          Write-Host "✓ TrayService.exe found"
+        echo 'Checking for TrayService.exe...'
+        if (Test-Path 'build\Release\TrayService.exe') {
+          Write-Host '✓ TrayService.exe found'
           Get-Item build\Release\TrayService.exe | Select-Object FullName, Length
         } else {
-          Write-Error "TrayService.exe not found!"
-          exit 1
-        }
-      shell: powershell
-      
-    - name: Verify Build Artifacts
-      run: |
-        echo "Checking for TrayApp.exe..."
-        if (Test-Path "build\Release\TrayApp.exe") {
-          Write-Host "✓ TrayApp.exe found"
-          Get-Item build\Release\TrayApp.exe | Select-Object FullName, Length
-        } else {
-          Write-Error "TrayApp.exe not found!"
-          exit 1
-        }
-        
-        echo "Checking for TrayService.exe..."
-        if (Test-Path "build\Release\TrayService.exe") {
-          Write-Host "✓ TrayService.exe found"
-          Get-Item build\Release\TrayService.exe | Select-Object FullName, Length
-        } else {
-          Write-Error "TrayService.exe not found!"
+          Write-Error 'TrayService.exe not found!'
           exit 1
         }
       shell: powershell
