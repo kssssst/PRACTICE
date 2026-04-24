@@ -37,6 +37,13 @@ add_custom_command(
     COMMENT "Generating RPC client files from IDL"
 )
 
+# Создаем отдельный target для MIDL генерации
+add_custom_target(GenerateRpcFiles DEPENDS 
+    "${RPC_OUTPUT_DIR}/TrayService_c.c" 
+    "${RPC_OUTPUT_DIR}/TrayService_s.c" 
+    "${RPC_OUTPUT_DIR}/TrayService.h"
+)
+
 # Исполняемый файл графического приложения
 add_executable(TrayApp WIN32
     resources/src/tray_win32.cpp
@@ -44,6 +51,9 @@ add_executable(TrayApp WIN32
     "${RPC_OUTPUT_DIR}/TrayService_c.c"
     TrayApp.rc
 )
+
+# Добавляем зависимость от генерации MIDL файлов
+add_dependencies(TrayApp GenerateRpcFiles)
 
 target_compile_definitions(TrayApp PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX

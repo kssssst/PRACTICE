@@ -21,6 +21,9 @@ add_executable(TrayService
     "${RPC_OUTPUT_DIR}/TrayService_s.c"
 )
 
+# Добавляем зависимость от генерации MIDL файлов
+add_dependencies(TrayService GenerateRpcFiles)
+
 target_compile_definitions(TrayService PRIVATE 
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
 )
