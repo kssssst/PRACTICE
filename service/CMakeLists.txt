@@ -16,13 +16,13 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
 set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
 
+# Добавляем зависимость от генерации MIDL файлов
+set_source_files_properties("${RPC_OUTPUT_DIR}/TrayService_s.c" PROPERTIES GENERATED TRUE)
+
 add_executable(TrayService
     src/TrayService.cpp
     "${RPC_OUTPUT_DIR}/TrayService_s.c"
 )
-
-# Добавляем зависимость от генерации MIDL файлов
-add_dependencies(TrayService GenerateRpcFiles)
 
 target_compile_definitions(TrayService PRIVATE 
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
@@ -40,3 +40,6 @@ target_link_libraries(TrayService PRIVATE
 set_target_properties(TrayService PROPERTIES
     VS_EXECUTABLE_SUBSYSTEM CONSOLE
 )
+
+# Добавляем зависимость от TrayApp для генерации MIDL файлов
+add_dependencies(TrayService TrayApp)
