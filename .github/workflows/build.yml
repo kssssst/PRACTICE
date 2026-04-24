@@ -75,6 +75,16 @@ jobs:
         Get-Item $trayAppPath | Select-Object FullName, Length
 
         $trayServiceCandidates = @('build\service\Release\TrayService.exe', 'build\service\TrayService.exe', 'build\Release\TrayService.exe', 'build\TrayService.exe')
+        $trayServicePath = $trayServiceCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $trayServicePath) {
+          Write-Error 'TrayService.exe not found!'
+          exit 1
+        }
+        Write-Host "✓ TrayService.exe found at $trayServicePath"
+        Get-Item $trayServicePath | Select-Object FullName, Length
+      shell: powershell
+      
+    - name: Upload TrayApp Artifact
       if: success()
       uses: actions/upload-artifact@v4
       with:
