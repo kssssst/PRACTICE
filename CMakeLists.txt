@@ -4,7 +4,6 @@ project(TrayApp)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Все исполняемые файлы будут собираться в корень build/
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}")
@@ -26,7 +25,6 @@ set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 set(RPC_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc")
 file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
 
-# Генерация RPC клиентских файлов (для TrayApp)
 add_custom_command(
     OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
@@ -38,7 +36,6 @@ add_custom_command(
     COMMENT "Generating RPC client files from IDL"
 )
 
-# ====================== TrayApp (основное приложение) ======================
 add_executable(TrayApp WIN32
     resources/src/tray_win32.cpp
     resources/src/TrayServiceClient.cpp
@@ -64,9 +61,8 @@ set_target_properties(TrayApp PROPERTIES
     WIN32_EXECUTABLE ON
 )
 
-# ====================== Сервис (TrayService) ======================
-# Важно: add_subdirectory должен быть ПОСЛЕ определения TrayApp,
-# но ДО любых команд, которые ссылаются на TrayService
+# ====================== TrayService ======================
+# КРИТИЧНО: add_subdirectory ДОЛЖЕН быть ПОСЛЕ TrayApp, но ДО POST_BUILD команд
 add_subdirectory(service)
 
 # ====================== Копирование файлов для удобства ======================
