@@ -4,21 +4,21 @@ project(TrayApp)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Выходные файлы собираются в корень build
+# Все исполняемые файлы будут собираться в корень build/
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}")
 
-# Статическая линковка CRT (рекомендуется для служб и tray-приложений)
+# Статическая линковка CRT
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# Поддержка UTF-8 для MSVC
+# UTF-8 поддержка
 add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-# Поддержка компилятора ресурсов
+# Компилятор ресурсов
 enable_language(RC)
 set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 
@@ -38,7 +38,7 @@ add_custom_command(
     COMMENT "Generating RPC client files from IDL"
 )
 
-# ====================== TrayApp (GUI) ======================
+# ====================== TrayApp (основное приложение) ======================
 add_executable(TrayApp WIN32
     resources/src/tray_win32.cpp
     resources/src/TrayServiceClient.cpp
@@ -64,11 +64,12 @@ set_target_properties(TrayApp PROPERTIES
     WIN32_EXECUTABLE ON
 )
 
-# ====================== Сервис ======================
+# ====================== Сервис (TrayService) ======================
+# Важно: add_subdirectory должен быть ПОСЛЕ определения TrayApp,
+# но ДО любых команд, которые ссылаются на TrayService
 add_subdirectory(service)
 
-# ====================== Пост-обработка ======================
-# Копируем TrayApp.exe и TrayService.exe в корень build для удобства
+# ====================== Копирование файлов для удобства ======================
 add_custom_command(TARGET TrayApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:TrayApp>
@@ -82,3 +83,5 @@ add_custom_command(TARGET TrayService POST_BUILD
         "${CMAKE_BINARY_DIR}/TrayService.exe"
     COMMENT "Copying TrayService.exe to build root"
 )
+
+message(STATUS "Build configuration completed successfully.")
