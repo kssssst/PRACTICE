@@ -22,11 +22,10 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 enable_language(RC)
 set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /l 0x409 /r")
 
-# ====================== RPC ======================
+
 set(RPC_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc")
 file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
 
-# Генерация RPC клиентских файлов
 add_custom_command(
     OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
@@ -38,7 +37,6 @@ add_custom_command(
     COMMENT "Generating RPC client files from IDL"
 )
 
-# ====================== TrayApp ======================
 add_executable(TrayApp WIN32
     resources/src/tray_win32.cpp
     resources/src/TrayServiceClient.cpp
@@ -66,21 +64,5 @@ set_target_properties(TrayApp PROPERTIES
 
 # ====================== TrayService ======================
 add_subdirectory(service)
-
-# ====================== Копирование для удобства ======================
-# Эти команды теперь используют BYPRODUCTS + DEPENDS, чтобы избежать ошибки "TARGET not created in this directory"
-add_custom_command(TARGET TrayApp POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:TrayApp>
-        "${CMAKE_BINARY_DIR}/TrayApp.exe"
-    COMMENT "Copying TrayApp.exe to build root"
-)
-
-add_custom_command(TARGET TrayService POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:TrayService>
-        "${CMAKE_BINARY_DIR}/TrayService.exe"
-    COMMENT "Copying TrayService.exe to build root"
-)
 
 message(STATUS "CMake configuration completed successfully for ARM64.")

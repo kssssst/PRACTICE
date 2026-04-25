@@ -14,10 +14,17 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-set_source_files_properties(
-    "${RPC_OUTPUT_DIR}/TrayService_s.c"
-    "${RPC_OUTPUT_DIR}/TrayService.h"
-    PROPERTIES GENERATED TRUE
+set(RPC_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/rpc")
+file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
+
+add_custom_command(
+    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_s.c" "${RPC_OUTPUT_DIR}/TrayService.h"
+    COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.acf"
+            /server stub /out "${RPC_OUTPUT_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.idl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/TrayService.acf"
+    COMMENT "Generating RPC server files"
 )
 
 add_executable(TrayService
@@ -25,21 +32,8 @@ add_executable(TrayService
     "${RPC_OUTPUT_DIR}/TrayService_s.c"
 )
 
-target_compile_definitions(TrayService PRIVATE
-    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
-)
+target_compile_definitions(TrayService PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_include_directories(TrayService PRIVATE "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv advapi32 shell32 user32 gdi32)
 
-target_include_directories(TrayService PRIVATE
-    "${RPC_OUTPUT_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src"
-)
-
-target_link_libraries(TrayService PRIVATE
-    rpcrt4 wtsapi32 userenv advapi32 shell32 user32 gdi32
-)
-
-add_dependencies(TrayService GenerateRpcFiles)
-
-set_target_properties(TrayService PROPERTIES
-    VS_EXECUTABLE_SUBSYSTEM CONSOLE
-)
+set_target_properties(TrayService PROPERTIES VS_EXECUTABLE_SUBSYSTEM CONSOLE)
