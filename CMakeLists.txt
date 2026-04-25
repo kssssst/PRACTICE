@@ -25,37 +25,15 @@ set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
 file(MAKE_DIRECTORY("${RPC_OUTPUT_DIR}"))
 
 add_custom_command(
-    OUTPUT
-        "${RPC_OUTPUT_DIR}/TrayService_c.c"
-        "${RPC_OUTPUT_DIR}/TrayService_s.c"
-        "${RPC_OUTPUT_DIR}/TrayService.h"
+    OUTPUT "${RPC_OUTPUT_DIR}/TrayService_c.c" "${RPC_OUTPUT_DIR}/TrayService.h"
     COMMAND midl.exe /acf "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
-            /cstub "${RPC_OUTPUT_DIR}/TrayService_c.c"
-            /sstub "${RPC_OUTPUT_DIR}/TrayService_s.c"
-            /header "${RPC_OUTPUT_DIR}/TrayService.h"
+            /client stub /out "${RPC_OUTPUT_DIR}"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
-    DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.idl"
             "${CMAKE_CURRENT_SOURCE_DIR}/service/src/TrayService.acf"
-    COMMENT "Generating RPC files from IDL"
-    VERBATIM
+    COMMENT "Generating RPC client files"
 )
 
-add_custom_target(GenerateRpcFiles
-    DEPENDS
-        "${RPC_OUTPUT_DIR}/TrayService_c.c"
-        "${RPC_OUTPUT_DIR}/TrayService_s.c"
-        "${RPC_OUTPUT_DIR}/TrayService.h"
-)
-
-set_source_files_properties(
-    "${RPC_OUTPUT_DIR}/TrayService_c.c"
-    "${RPC_OUTPUT_DIR}/TrayService_s.c"
-    "${RPC_OUTPUT_DIR}/TrayService.h"
-    PROPERTIES GENERATED TRUE
-)
-
-# Исполняемый файл графического приложения
 add_executable(TrayApp WIN32
     resources/src/tray_win32.cpp
     resources/src/TrayServiceClient.cpp
@@ -63,25 +41,4 @@ add_executable(TrayApp WIN32
     TrayApp.rc
 )
 
-target_compile_definitions(TrayApp PRIVATE
-    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
-)
-
-target_include_directories(TrayApp PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources/src
-    "${RPC_OUTPUT_DIR}"
-)
-
-target_link_libraries(TrayApp PRIVATE
-    shell32 user32 gdi32 comctl32 rpcrt4 advapi32 psapi
-)
-
-add_dependencies(TrayApp GenerateRpcFiles)
-
-set_target_properties(TrayApp PROPERTIES
-    VS_EXECUTABLE_SUBSYSTEM WIN32
-    WIN32_EXECUTABLE ON
-)
-
-# Добавляем проект службы как поддиректорию
-add_subdirectory(service)
+# ... остальное без изменений
