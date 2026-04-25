@@ -6,6 +6,7 @@
 #include <userenv.h>
 #include <rpc.h>
 #include <rpcndr.h>
+#include <cstdlib>
 #include <map>
 #include <string>
 
@@ -53,6 +54,7 @@ namespace {
         g_serviceStatus.dwCurrentState = state;
         g_serviceStatus.dwWin32ExitCode = win32ExitCode;
         g_serviceStatus.dwWaitHint = (state == SERVICE_RUNNING || state == SERVICE_STOPPED) ? 0 : 5000;
+        g_serviceStatus.dwControlsAccepted = (state == SERVICE_RUNNING) ? SERVICE_ACCEPT_SESSIONCHANGE : 0;
         if (g_statusHandle) SetServiceStatus(g_statusHandle, &g_serviceStatus);
     }
 
@@ -107,7 +109,7 @@ namespace {
         DWORD count = 0;
         if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &count)) {
             for (DWORD i = 0; i < count; ++i) {
-                if (sessions[i].SessionId != 0 && (sessions[i].State == WTSActive || sessions[i].State == WTSConnected))
+                if (sessions[i].SessionId != 0)
                     LaunchAppInSession(sessions[i].SessionId);
             }
             WTSFreeMemory(sessions);
@@ -128,16 +130,22 @@ namespace {
     }
 
     DWORD WINAPI ServiceWorkerThread(LPVOID) {
-        LaunchAppInExistingSessions();
-
         RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", RPC_C_PROTSEQ_MAX_REQS_DEFAULT, (RPC_WSTR)kRpcEndpoint, nullptr);
         if (status == RPC_S_OK)
             status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, nullptr, nullptr);
         if (status == RPC_S_OK)
             status = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, TRUE);
+        if (status != RPC_S_OK) {
+            UpdateServiceState(SERVICE_STOPPED, status);
+            return status;
+        }
+
+        UpdateServiceState(SERVICE_RUNNING);
+        LaunchAppInExistingSessions();
 
         WaitForSingleObject(g_stopEvent, INFINITE);
 
+        UpdateServiceState(SERVICE_STOP_PENDING);
         RpcMgmtStopServerListening(nullptr);
         RpcServerUnregisterIf(ITrayService_v1_0_s_ifspec, nullptr, FALSE);
         TerminateAllApps();
@@ -175,19 +183,29 @@ VOID WINAPI ServiceMain(DWORD, LPWSTR*) {
     if (!g_statusHandle) return;
 
     g_serviceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-    g_serviceStatus.dwControlsAccepted = SERVICE_ACCEPT_SESSIONCHANGE;  // только сессии, без STOP/SHUTDOWN
     UpdateServiceState(SERVICE_START_PENDING);
 
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!g_stopEvent) {
+        UpdateServiceState(SERVICE_STOPPED, GetLastError());
+        return;
+    }
 
     HANDLE worker = CreateThread(nullptr, 0, ServiceWorkerThread, nullptr, 0, nullptr);
     if (worker) {
         WaitForSingleObject(worker, INFINITE);
+        DWORD workerExitCode = NO_ERROR;
+        GetExitCodeThread(worker, &workerExitCode);
         CloseHandle(worker);
+        CloseHandle(g_stopEvent);
+        UpdateServiceState(SERVICE_STOPPED, workerExitCode);
+        return;
+    } else {
+        const DWORD error = GetLastError();
+        CloseHandle(g_stopEvent);
+        UpdateServiceState(SERVICE_STOPPED, error);
+        return;
     }
-
-    CloseHandle(g_stopEvent);
-    UpdateServiceState(SERVICE_STOPPED);
 }
 
 int wmain() {

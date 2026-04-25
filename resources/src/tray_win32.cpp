@@ -192,6 +192,43 @@ bool ShouldStopServiceOnly(LPCWSTR commandLine)
     return commandLine != nullptr && wcsstr(commandLine, L"/stopservice") != nullptr;
 }
 
+bool ShouldStartServiceOnly(LPCWSTR commandLine)
+{
+    return commandLine != nullptr && wcsstr(commandLine, L"/startservice") != nullptr;
+}
+
+bool StartServiceElevatedAndWait()
+{
+    wchar_t modulePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) == 0)
+    {
+        return false;
+    }
+
+    SHELLEXECUTEINFOW shellExecuteInfo = {};
+    shellExecuteInfo.cbSize = sizeof(shellExecuteInfo);
+    shellExecuteInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+    shellExecuteInfo.lpVerb = L"runas";
+    shellExecuteInfo.lpFile = modulePath;
+    shellExecuteInfo.lpParameters = L"/startservice";
+    shellExecuteInfo.nShow = SW_HIDE;
+
+    if (!ShellExecuteExW(&shellExecuteInfo))
+    {
+        return false;
+    }
+
+    DWORD exitCode = 1;
+    if (shellExecuteInfo.hProcess != nullptr)
+    {
+        WaitForSingleObject(shellExecuteInfo.hProcess, INFINITE);
+        GetExitCodeProcess(shellExecuteInfo.hProcess, &exitCode);
+        CloseHandle(shellExecuteInfo.hProcess);
+    }
+
+    return exitCode == 0;
+}
+
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == g_taskbarRestartMessage)
@@ -269,9 +306,19 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
         return RequestServiceStopAndWait() == 0 ? 0 : 1;
     }
 
+    if (ShouldStartServiceOnly(commandLine))
+    {
+        return CheckAndStartService() == 0 ? 0 : 1;
+    }
+
     const int startResult = CheckAndStartService();
     if (startResult != 0)
     {
+        if (startResult == -6 && StartServiceElevatedAndWait())
+        {
+            return 0;
+        }
+
         MessageBoxW(
             nullptr,
             L"Не удалось запустить службу TrayAppService или дождаться состояния Running.",

@@ -117,6 +117,7 @@ namespace winrt::TrayApp::implementation
                 break;
             case 2: // Выход
                 pThis->RemoveTrayIcon();
+                RequestServiceStopAndWait();
                 ::ExitProcess(0);
                 break;
             }

@@ -218,7 +218,7 @@ int CheckAndStartService()
     SC_HANDLE serviceHandle = OpenServiceW(
         scmHandle,
         kServiceName,
-        SERVICE_START | SERVICE_QUERY_STATUS);
+        SERVICE_QUERY_STATUS);
     if (serviceHandle == nullptr)
     {
         CloseServiceHandle(scmHandle);
@@ -247,13 +247,37 @@ int CheckAndStartService()
         return -4;
     }
 
+    if (currentState == SERVICE_START_PENDING)
+    {
+        CloseServiceHandle(serviceHandle);
+        CloseServiceHandle(scmHandle);
+        return WaitForServiceState(SERVICE_RUNNING, 30000);
+    }
+
+    CloseServiceHandle(serviceHandle);
+
+    serviceHandle = OpenServiceW(
+        scmHandle,
+        kServiceName,
+        SERVICE_START | SERVICE_QUERY_STATUS);
+    if (serviceHandle == nullptr)
+    {
+        const DWORD error = GetLastError();
+        CloseServiceHandle(scmHandle);
+        return error == ERROR_ACCESS_DENIED ? -6 : -2;
+    }
+
     if (currentState != SERVICE_START_PENDING)
     {
-        if (!StartServiceW(serviceHandle, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING)
+        if (!StartServiceW(serviceHandle, 0, nullptr))
         {
-            CloseServiceHandle(serviceHandle);
-            CloseServiceHandle(scmHandle);
-            return -5;
+            const DWORD error = GetLastError();
+            if (error != ERROR_SERVICE_ALREADY_RUNNING)
+            {
+                CloseServiceHandle(serviceHandle);
+                CloseServiceHandle(scmHandle);
+                return error == ERROR_ACCESS_DENIED ? -6 : -5;
+            }
         }
     }
 

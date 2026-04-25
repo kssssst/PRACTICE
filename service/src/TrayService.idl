@@ -6,4 +6,4 @@ interface ITrayService
 {
     error_status_t StopService();
     error_status_t GetServiceStatus([out] long *status);
-}
+};
