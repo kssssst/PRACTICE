@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "resource.h"
+#include "TrayServiceClient.h"
 #include <windowsx.h>
 #include <shellapi.h>
 
@@ -45,6 +46,7 @@ namespace winrt::TrayApp::implementation
     void MainWindow::OnExitClick(winrt::Windows::Foundation::IInspectable const&, winrt::Microsoft::UI::Xaml::RoutedEventArgs const&)
     {
         RemoveTrayIcon();
+        RequestServiceStopAndWait();
         ::ExitProcess(0);
     }
 
