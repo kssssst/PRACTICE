@@ -37,7 +37,7 @@ namespace {
 constexpr wchar_t kServiceName[] = L"TrayAppService";
 constexpr wchar_t kRpcEndpoint[] = L"TrayServiceEndpoint";
 constexpr wchar_t kAppName[] = L"TrayApp.exe";
-constexpr wchar_t kDefaultServerUrl[] = L"https://localhost:8443";
+constexpr wchar_t kDefaultServerUrl[] = L"https://10.211.55.1:8443";
 constexpr long kErrorNotAuthenticated = 1001;
 constexpr long kErrorNoLicense = 2001;
 constexpr long kErrorNetwork = 3001;

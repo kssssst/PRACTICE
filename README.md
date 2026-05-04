@@ -22,7 +22,7 @@ GUI:
 - периодически опрашивает службу и обновляет состояние на главном экране.
 
 Настройки службы по умолчанию:
-- `TRAYAPP_SERVER_URL=https://localhost:8443`
+- `TRAYAPP_SERVER_URL=https://10.211.55.1:8443`
 - `TRAYAPP_PRODUCT_ID=1`
 - `TRAYAPP_ALLOW_INSECURE_TLS=1`
 
