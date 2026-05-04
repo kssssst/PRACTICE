@@ -37,7 +37,7 @@ namespace {
 constexpr wchar_t kServiceName[] = L"TrayAppService";
 constexpr wchar_t kRpcEndpoint[] = L"TrayServiceEndpoint";
 constexpr wchar_t kAppName[] = L"TrayApp.exe";
-constexpr wchar_t kDefaultServerUrl[] = L"https://10.211.55.1:8443";
+constexpr wchar_t kDefaultServerUrls[] = L"https://10.211.55.2:8443;https://10.211.55.1:8443;https://localhost:8443";
 constexpr long kErrorNotAuthenticated = 1001;
 constexpr long kErrorNoLicense = 2001;
 constexpr long kErrorNetwork = 3001;
@@ -58,7 +58,8 @@ struct HttpResponse {
 };
 
 struct ServiceState {
-    std::wstring serverUrl = kDefaultServerUrl;
+    std::wstring serverUrl = L"https://10.211.55.2:8443";
+    std::vector<std::wstring> serverUrls;
     long productId = 1;
     std::wstring email;
     std::string accessToken;
@@ -245,6 +246,30 @@ std::wstring ReadEnvString(const wchar_t* name, const wchar_t* fallback) {
     return count > 0 && count < std::size(buffer) ? std::wstring(buffer) : std::wstring(fallback);
 }
 
+std::vector<std::wstring> SplitServerUrls(const std::wstring& value) {
+    std::vector<std::wstring> urls;
+    size_t start = 0;
+    while (start < value.size()) {
+        size_t end = value.find_first_of(L";,", start);
+        std::wstring item = value.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
+        while (!item.empty() && iswspace(item.front())) item.erase(item.begin());
+        while (!item.empty() && iswspace(item.back())) item.pop_back();
+        if (!item.empty()) urls.push_back(item);
+        if (end == std::wstring::npos) break;
+        start = end + 1;
+    }
+    return urls;
+}
+
+std::wstring JoinServerUrls(const std::vector<std::wstring>& urls) {
+    std::wstring result;
+    for (const auto& url : urls) {
+        if (!result.empty()) result += L", ";
+        result += url;
+    }
+    return result;
+}
+
 long ReadEnvLong(const wchar_t* name, long fallback) {
     wchar_t buffer[64] = {};
     DWORD count = GetEnvironmentVariableW(name, buffer, static_cast<DWORD>(std::size(buffer)));
@@ -358,6 +383,27 @@ HttpResponse HttpPost(const std::wstring& baseUrl, const wchar_t* path, const st
     return response;
 }
 
+HttpResponse HttpPostWithFallback(const wchar_t* path, const std::string& body, const std::string& bearerToken = {}) {
+    std::vector<std::wstring> urls;
+    EnterCriticalSection(&g_stateLock);
+    urls = g_state.serverUrls;
+    if (urls.empty()) urls.push_back(g_state.serverUrl);
+    LeaveCriticalSection(&g_stateLock);
+
+    HttpResponse lastResponse;
+    for (const auto& url : urls) {
+        HttpResponse response = HttpPost(url, path, body, bearerToken);
+        if (response.status != 0) {
+            EnterCriticalSection(&g_stateLock);
+            g_state.serverUrl = url;
+            LeaveCriticalSection(&g_stateLock);
+            return response;
+        }
+        lastResponse = response;
+    }
+    return lastResponse;
+}
+
 void ClearLicenseLocked(const std::wstring& reason = L"Лицензия отсутствует") {
     g_state.licenseTicketJson.clear();
     g_state.licenseSignature.clear();
@@ -408,18 +454,16 @@ bool StoreTicketResponseLocked(const std::string& body) {
 }
 
 bool RefreshTokens() {
-    std::wstring serverUrl;
     std::wstring email;
     std::string refreshToken;
     EnterCriticalSection(&g_stateLock);
-    serverUrl = g_state.serverUrl;
     email = g_state.email;
     refreshToken = g_state.refreshToken;
     LeaveCriticalSection(&g_stateLock);
     if (refreshToken.empty()) return false;
 
     const std::string body = "{\"refreshToken\":\"" + JsonEscape(refreshToken) + "\"}";
-    const HttpResponse response = HttpPost(serverUrl, L"/auth/refresh", body);
+    const HttpResponse response = HttpPostWithFallback(L"/auth/refresh", body);
     EnterCriticalSection(&g_stateLock);
     const bool ok = response.status == 200 && StoreTokenResponseLocked(email, response.body);
     if (!ok) {
@@ -432,12 +476,10 @@ bool RefreshTokens() {
 }
 
 bool CheckLicense() {
-    std::wstring serverUrl;
     std::string accessToken;
     long productId = 1;
     std::wstring mac = GetDeviceMac();
     EnterCriticalSection(&g_stateLock);
-    serverUrl = g_state.serverUrl;
     accessToken = g_state.accessToken;
     productId = g_state.productId;
     LeaveCriticalSection(&g_stateLock);
@@ -445,7 +487,7 @@ bool CheckLicense() {
 
     std::ostringstream body;
     body << "{\"deviceMac\":\"" << JsonEscape(WideToUtf8(mac)) << "\",\"productId\":" << productId << "}";
-    const HttpResponse response = HttpPost(serverUrl, L"/api/licenses/check", body.str(), accessToken);
+    const HttpResponse response = HttpPostWithFallback(L"/api/licenses/check", body.str(), accessToken);
     EnterCriticalSection(&g_stateLock);
     const bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
     if (!ok) ClearLicenseLocked(L"Активная лицензия не найдена");
@@ -581,7 +623,11 @@ void TerminateAllApps() {
 }
 
 DWORD WINAPI ServiceWorkerThread(LPVOID) {
-    g_state.serverUrl = ReadEnvString(L"TRAYAPP_SERVER_URL", kDefaultServerUrl);
+    std::wstring configuredUrls = ReadEnvString(L"TRAYAPP_SERVER_URLS", L"");
+    if (configuredUrls.empty()) configuredUrls = ReadEnvString(L"TRAYAPP_SERVER_URL", kDefaultServerUrls);
+    g_state.serverUrls = SplitServerUrls(configuredUrls);
+    if (g_state.serverUrls.empty()) g_state.serverUrls = SplitServerUrls(kDefaultServerUrls);
+    g_state.serverUrl = g_state.serverUrls.front();
     g_state.productId = ReadEnvLong(L"TRAYAPP_PRODUCT_ID", 1);
 
     RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", RPC_C_PROTSEQ_MAX_REQS_DEFAULT, (RPC_WSTR)kRpcEndpoint, nullptr);
@@ -637,13 +683,9 @@ error_status_t GetCurrentUser(AuthUserInfo* info) {
 error_status_t Login(wchar_t* email, wchar_t* password, AuthUserInfo* info) {
     if (!email || !password || !info) return RPC_X_NULL_REF_POINTER;
     ZeroMemory(info, sizeof(*info));
-    std::wstring serverUrl;
-    EnterCriticalSection(&g_stateLock);
-    serverUrl = g_state.serverUrl;
-    LeaveCriticalSection(&g_stateLock);
 
     const std::string body = "{\"email\":\"" + JsonEscape(WideToUtf8(email)) + "\",\"password\":\"" + JsonEscape(WideToUtf8(password)) + "\"}";
-    const HttpResponse response = HttpPost(serverUrl, L"/auth/login", body);
+    const HttpResponse response = HttpPostWithFallback(L"/auth/login", body);
 
     EnterCriticalSection(&g_stateLock);
     if (response.status == 200 && StoreTokenResponseLocked(email, response.body)) {
@@ -654,7 +696,9 @@ error_status_t Login(wchar_t* email, wchar_t* password, AuthUserInfo* info) {
         CopyString(info->message, std::size(info->message), L"Вход выполнен");
     } else {
         ClearAuthLocked();
-        g_state.lastAuthError = response.status == 0 ? L"Сервер недоступен" : L"Неверный email или пароль";
+        g_state.lastAuthError = response.status == 0
+            ? L"Сервер недоступен. Проверены адреса: " + JoinServerUrls(g_state.serverUrls)
+            : L"Неверный email или пароль";
         info->authenticated = 0;
         info->errorCode = response.status == 0 ? kErrorNetwork : kErrorBadResponse;
         CopyString(info->message, std::size(info->message), g_state.lastAuthError);
@@ -665,15 +709,13 @@ error_status_t Login(wchar_t* email, wchar_t* password, AuthUserInfo* info) {
 }
 
 error_status_t Logout() {
-    std::wstring serverUrl;
     std::string refreshToken;
     EnterCriticalSection(&g_stateLock);
-    serverUrl = g_state.serverUrl;
     refreshToken = g_state.refreshToken;
     LeaveCriticalSection(&g_stateLock);
     if (!refreshToken.empty()) {
         const std::string body = "{\"refreshToken\":\"" + JsonEscape(refreshToken) + "\"}";
-        HttpPost(serverUrl, L"/auth/logout", body);
+        HttpPostWithFallback(L"/auth/logout", body);
     }
     EnterCriticalSection(&g_stateLock);
     ClearAuthLocked();
@@ -713,10 +755,8 @@ error_status_t GetLicenseInfo(LicenseInfo* info) {
 error_status_t ActivateProduct(wchar_t* activationKey, LicenseInfo* info) {
     if (!activationKey || !info) return RPC_X_NULL_REF_POINTER;
     ZeroMemory(info, sizeof(*info));
-    std::wstring serverUrl;
     std::string accessToken;
     EnterCriticalSection(&g_stateLock);
-    serverUrl = g_state.serverUrl;
     accessToken = g_state.accessToken;
     LeaveCriticalSection(&g_stateLock);
     if (accessToken.empty()) {
@@ -730,7 +770,7 @@ error_status_t ActivateProduct(wchar_t* activationKey, LicenseInfo* info) {
     const std::string body = "{\"activationKey\":\"" + JsonEscape(WideToUtf8(activationKey)) +
                              "\",\"deviceMac\":\"" + JsonEscape(WideToUtf8(mac)) +
                              "\",\"deviceName\":\"" + JsonEscape(WideToUtf8(deviceName)) + "\"}";
-    const HttpResponse response = HttpPost(serverUrl, L"/api/licenses/activate", body, accessToken);
+    const HttpResponse response = HttpPostWithFallback(L"/api/licenses/activate", body, accessToken);
     EnterCriticalSection(&g_stateLock);
     bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
     if (!ok) {
