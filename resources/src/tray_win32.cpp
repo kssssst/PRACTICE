@@ -241,6 +241,10 @@ void RefreshUiState()
 
 void CreateMainControls(HWND windowHandle)
 {
+    auto controlId = [](UINT id) -> HMENU {
+        return reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id));
+    };
+
     g_statusLabel = CreateWindowW(L"STATIC", L"Проверка состояния...", WS_CHILD | WS_VISIBLE,
                                   24, 24, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_emailEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
@@ -248,17 +252,17 @@ void CreateMainControls(HWND windowHandle)
     g_passwordEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
                                      24, 100, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_loginButton = CreateWindowW(L"BUTTON", L"Войти", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                  300, 64, 120, 62, windowHandle, reinterpret_cast<HMENU>(kLoginButtonId), g_instanceHandle, nullptr);
+                                  300, 64, 120, 62, windowHandle, controlId(kLoginButtonId), g_instanceHandle, nullptr);
     g_logoutButton = CreateWindowW(L"BUTTON", L"Выйти", WS_CHILD | BS_PUSHBUTTON,
-                                   300, 64, 120, 30, windowHandle, reinterpret_cast<HMENU>(kLogoutButtonId), g_instanceHandle, nullptr);
+                                   300, 64, 120, 30, windowHandle, controlId(kLogoutButtonId), g_instanceHandle, nullptr);
     g_licenseLabel = CreateWindowW(L"STATIC", L"Лицензия: проверка...", WS_CHILD | WS_VISIBLE,
                                    24, 150, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_activationEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL,
                                        24, 190, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_activateButton = CreateWindowW(L"BUTTON", L"Активировать", WS_CHILD | BS_PUSHBUTTON,
-                                     300, 190, 120, 26, windowHandle, reinterpret_cast<HMENU>(kActivateButtonId), g_instanceHandle, nullptr);
+                                     300, 190, 120, 26, windowHandle, controlId(kActivateButtonId), g_instanceHandle, nullptr);
     g_refreshButton = CreateWindowW(L"BUTTON", L"Обновить", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                    430, 64, 120, 30, windowHandle, reinterpret_cast<HMENU>(kRefreshButtonId), g_instanceHandle, nullptr);
+                                    430, 64, 120, 30, windowHandle, controlId(kRefreshButtonId), g_instanceHandle, nullptr);
     g_antivirusLabel = CreateWindowW(L"STATIC", L"Антивирус: заблокирован", WS_CHILD | WS_VISIBLE,
                                      24, 240, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
 

@@ -1,6 +1,7 @@
 #define _WIN32_WINNT 0x0601
 #define WINVER 0x0601
 
+#include <winsock2.h>
 #include <windows.h>
 #include <wtsapi32.h>
 #include <userenv.h>
@@ -8,6 +9,7 @@
 #include <rpcndr.h>
 #include <winhttp.h>
 #include <iphlpapi.h>
+#include <ws2tcpip.h>
 
 #include <algorithm>
 #include <cctype>
@@ -271,7 +273,7 @@ std::wstring GetDeviceMac() {
         for (auto* a = adapters; a != nullptr; a = a->Next) {
             if (a->PhysicalAddressLength >= 6 && a->IfType != IF_TYPE_SOFTWARE_LOOPBACK) {
                 wchar_t mac[32] = {};
-                swprintf_s(mac, L"%02X:%02X:%02X:%02X:%02X:%02X",
+                swprintf_s(mac, std::size(mac), L"%02X:%02X:%02X:%02X:%02X:%02X",
                            a->PhysicalAddress[0], a->PhysicalAddress[1], a->PhysicalAddress[2],
                            a->PhysicalAddress[3], a->PhysicalAddress[4], a->PhysicalAddress[5]);
                 return mac;
