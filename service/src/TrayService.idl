@@ -4,6 +4,33 @@
 ]
 interface ITrayService
 {
+    typedef struct AuthUserInfo
+    {
+        long authenticated;
+        long errorCode;
+        [string] wchar_t email[256];
+        [string] wchar_t message[512];
+    } AuthUserInfo;
+
+    typedef struct LicenseInfo
+    {
+        long hasLicense;
+        long blocked;
+        long errorCode;
+        [string] wchar_t activationDate[64];
+        [string] wchar_t expirationDate[64];
+        [string] wchar_t deviceMac[64];
+        [string] wchar_t message[512];
+    } LicenseInfo;
+
     error_status_t StopService();
     error_status_t GetServiceStatus([out] long *status);
+    error_status_t GetCurrentUser([out] AuthUserInfo *info);
+    error_status_t Login([in, string] wchar_t *email,
+                         [in, string] wchar_t *password,
+                         [out] AuthUserInfo *info);
+    error_status_t Logout();
+    error_status_t GetLicenseInfo([out] LicenseInfo *info);
+    error_status_t ActivateProduct([in, string] wchar_t *activationKey,
+                                   [out] LicenseInfo *info);
 };

@@ -34,6 +34,6 @@ add_executable(TrayService
 
 target_compile_definitions(TrayService PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(TrayService PRIVATE "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv advapi32 shell32 user32 gdi32)
+target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv advapi32 shell32 user32 gdi32 winhttp iphlpapi)
 
 set_target_properties(TrayService PROPERTIES VS_EXECUTABLE_SUBSYSTEM CONSOLE)

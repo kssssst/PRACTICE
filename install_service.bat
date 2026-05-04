@@ -11,6 +11,9 @@ set "SCRIPT_DIR=%~dp0"
 set "SERVICE_PATH=%SCRIPT_DIR%TrayService.exe"
 set "APP_PATH=%SCRIPT_DIR%TrayApp.exe"
 
+if not exist "%SERVICE_PATH%" set "SERVICE_PATH=%SCRIPT_DIR%build\TrayService.exe"
+if not exist "%APP_PATH%" set "APP_PATH=%SCRIPT_DIR%build\TrayApp.exe"
+
 echo Installing TrayAppService...
 
 if not exist "%SERVICE_PATH%" (
