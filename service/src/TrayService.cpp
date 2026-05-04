@@ -775,9 +775,16 @@ error_status_t ActivateProduct(wchar_t* activationKey, LicenseInfo* info) {
     bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
     if (!ok) {
         ClearLicenseLocked(response.status == 0 ? L"Сервер недоступен" : L"Не удалось активировать продукт");
+        info->hasLicense = 0;
+        info->blocked = 0;
+        info->errorCode = response.status == 0 ? kErrorNetwork : kErrorBadResponse;
+        CopyString(info->message, std::size(info->message), g_state.lastLicenseError);
     }
     LeaveCriticalSection(&g_stateLock);
-    if (response.status == 200 && !ok) CheckLicense();
+    if (!ok) {
+        SetEvent(g_stateChangedEvent);
+        return RPC_S_OK;
+    }
     SetEvent(g_stateChangedEvent);
     return GetLicenseInfo(info);
 }
