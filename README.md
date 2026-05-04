@@ -2,6 +2,7 @@
 
 Проект содержит Windows-службу `TrayAppService`, RPC-клиент и Win32 GUI.
 
+
 Служба:
 - выполняет вход через `POST https://localhost:8443/auth/login`;
 - хранит `accessToken`, `refreshToken` и лицензионный тикет только в оперативной памяти;
@@ -23,8 +24,10 @@ GUI:
 Настройки службы по умолчанию:
 - `TRAYAPP_SERVER_URL=https://localhost:8443`
 - `TRAYAPP_PRODUCT_ID=1`
+- `TRAYAPP_ALLOW_INSECURE_TLS=1`
 
 Если сервер запущен на другом адресе или продукт имеет другой ID, задайте эти переменные окружения для службы/системы перед запуском.
+Для учебного self-signed HTTPS сертификата проверка TLS отключена по умолчанию. Для строгой проверки задайте `TRAYAPP_ALLOW_INSECURE_TLS=0`.
 
 Сборка на Windows из Developer PowerShell:
 

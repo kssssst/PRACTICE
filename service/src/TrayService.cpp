@@ -251,6 +251,13 @@ long ReadEnvLong(const wchar_t* name, long fallback) {
     return count > 0 ? wcstol(buffer, nullptr, 10) : fallback;
 }
 
+bool ReadEnvBool(const wchar_t* name, bool fallback) {
+    wchar_t buffer[64] = {};
+    DWORD count = GetEnvironmentVariableW(name, buffer, static_cast<DWORD>(std::size(buffer)));
+    if (count == 0 || count >= std::size(buffer)) return fallback;
+    return wcscmp(buffer, L"0") != 0 && _wcsicmp(buffer, L"false") != 0 && _wcsicmp(buffer, L"no") != 0;
+}
+
 std::wstring GetDeviceName() {
     wchar_t buffer[MAX_COMPUTERNAME_LENGTH + 1] = {};
     DWORD size = static_cast<DWORD>(std::size(buffer));
@@ -317,8 +324,7 @@ HttpResponse HttpPost(const std::wstring& baseUrl, const wchar_t* path, const st
         return response;
     }
 
-    if (parts.nScheme == INTERNET_SCHEME_HTTPS &&
-        (_wcsicmp(hostName.c_str(), L"localhost") == 0 || hostName == L"127.0.0.1")) {
+    if (parts.nScheme == INTERNET_SCHEME_HTTPS && ReadEnvBool(L"TRAYAPP_ALLOW_INSECURE_TLS", true)) {
         DWORD securityFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
                               SECURITY_FLAG_IGNORE_CERT_DATE_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
         WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &securityFlags, sizeof(securityFlags));
