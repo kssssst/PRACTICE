@@ -453,6 +453,13 @@ bool StoreTicketResponseLocked(const std::string& body) {
     return true;
 }
 
+std::wstring ResponseErrorMessage(const HttpResponse& response, const wchar_t* fallback) {
+    if (response.status == 0) return L"Сервер недоступен";
+    const std::string error = JsonString(response.body, "error");
+    if (!error.empty()) return Utf8ToWide(error);
+    return fallback;
+}
+
 bool RefreshTokens() {
     std::wstring email;
     std::string refreshToken;
@@ -490,7 +497,7 @@ bool CheckLicense() {
     const HttpResponse response = HttpPostWithFallback(L"/api/licenses/check", body.str(), accessToken);
     EnterCriticalSection(&g_stateLock);
     const bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
-    if (!ok) ClearLicenseLocked(L"Активная лицензия не найдена");
+    if (!ok) ClearLicenseLocked(ResponseErrorMessage(response, L"Активная лицензия не найдена"));
     LeaveCriticalSection(&g_stateLock);
     SetEvent(g_stateChangedEvent);
     return ok;
@@ -774,7 +781,7 @@ error_status_t ActivateProduct(wchar_t* activationKey, LicenseInfo* info) {
     EnterCriticalSection(&g_stateLock);
     bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
     if (!ok) {
-        ClearLicenseLocked(response.status == 0 ? L"Сервер недоступен" : L"Не удалось активировать продукт");
+        ClearLicenseLocked(ResponseErrorMessage(response, L"Не удалось активировать продукт"));
         info->hasLicense = 0;
         info->blocked = 0;
         info->errorCode = response.status == 0 ? kErrorNetwork : kErrorBadResponse;
