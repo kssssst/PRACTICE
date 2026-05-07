@@ -1,0 +1,42 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="TrayApp"
+    Manufacturer="TrayApp"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="F7B6E10C-75F2-4A04-9F73-CF2175A62B8A"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Compressed="yes">
+
+    <SummaryInformation Description="TrayApp application and Windows service installer" Manufacturer="TrayApp" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of TrayApp is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="TrayApp" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="TrayApp" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="TrayApp" Level="1">
+      <ComponentGroupRef Id="AppPayload" />
+    </Feature>
+
+    <CustomAction
+      Id="SignalTrayServiceStopEvent"
+      Directory="INSTALLFOLDER"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore"
+      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;try { $e = [System.Threading.EventWaitHandle]::OpenExisting('Global\TrayServiceStopEvent'); $e.Set() | Out-Null; $e.Dispose(); Start-Sleep -Seconds 5 } catch { }&quot;" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SignalTrayServiceStopEvent" Before="StopServices" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
