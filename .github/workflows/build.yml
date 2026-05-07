@@ -3,54 +3,61 @@ name: Build TrayApp
 on:
   push:
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ main ]
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-11-arm
     
-    strategy:
-      matrix:
-        config: [Release, Debug]
-        
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Install dependencies
-      run: |
-        choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-      shell: powershell
-        
+    - uses: actions/checkout@v4
+      
     - name: Configure CMake
       run: |
-        if not exist build mkdir build
-        cd build
-        cmake .. -G "Visual Studio 17 2022" -A x64
-      shell: cmd
-      
+        cmake -S . -B build -G "Visual Studio 17 2022" -A ARM64
+      shell: powershell
+    
     - name: Build
       run: |
-        cd build
-        cmake --build . --config ${{ matrix.config }}
-      shell: cmd
+        cmake --build build --config Release
+      shell: powershell
       
-    - name: List build artifacts
+    - name: Verify generated files and binaries
       run: |
-        dir /s build\*.exe
-      shell: cmd
+        echo 'Checking for generated MIDL files...'
+        $requiredFiles = @(
+          'build\rpc\TrayService.h',
+          'build\rpc\TrayService_c.c',
+          'build\rpc\TrayService_s.c',
+          'build\TrayApp.exe',
+          'build\TrayService.exe'
+        )
+
+        foreach ($file in $requiredFiles) {
+          if (-not (Test-Path $file)) {
+            Write-Error "$file not found!"
+            exit 1
+          }
+          Write-Host "Found $file"
+        }
+
+        Get-Item build\TrayApp.exe, build\TrayService.exe | Select-Object FullName, Length
+      shell: powershell
+
+    - name: Create TrayApp package
+      if: success()
+      run: |
+        New-Item -ItemType Directory -Force -Path TrayApp | Out-Null
+        Copy-Item build\TrayApp.exe TrayApp\
+        Copy-Item build\TrayService.exe TrayApp\
+        Copy-Item install_service.bat TrayApp\
+        Copy-Item uninstall_service.bat TrayApp\
+      shell: powershell
       
-    - name: Upload Release Artifacts
-      if: matrix.config == 'Release'
+    - name: Upload TrayApp package
+      if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: TrayApp-${{ matrix.config }}
-        path: build/${{ matrix.config }}/TrayApp.exe
-        retention-days: 30
-        
-    - name: Upload Debug Artifacts
-      if: matrix.config == 'Debug'
-      uses: actions/upload-artifact@v4
-      with:
-        name: TrayApp-${{ matrix.config }}
-        path: build/${{ matrix.config }}/TrayApp.exe
-        retention-days: 7
+        name: TrayApp
+        path: TrayApp/
+        retention-days: 90

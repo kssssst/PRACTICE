@@ -1,148 +1,391 @@
 #include <windows.h>
 #include <shellapi.h>
-#include <cstdlib>
+#include <tlhelp32.h>
+#include <winsvc.h>
+
 #include "resource.h"
+#include "TrayServiceClient.h"
 
-#define WM_TRAYICON      (WM_USER + 1)
-#define ID_TRAY_EXIT     1001
-#define ID_TRAY_OPEN     1002
-#define ID_FILE_EXIT     2001
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "user32.lib")
 
-HINSTANCE g_hInst;
-HWND      g_hWnd = NULL;
-NOTIFYICONDATAW g_nid = {};
-HANDLE    g_hMutex = NULL;
-UINT      g_uTaskbarRestart = 0;
+namespace
+{
+constexpr UINT kTrayIconMessage = WM_APP + 1;
+constexpr UINT kTrayExitId = 1001;
+constexpr UINT kTrayOpenId = 1002;
+constexpr UINT kFileExitId = 2001;
+constexpr wchar_t kWindowClassName[] = L"TrayAppWin32Class";
+constexpr wchar_t kWindowTitle[] = L"Tray Application";
+constexpr wchar_t kServiceName[] = L"TrayAppService";
 
-void AddTrayIcon();
-void RemoveTrayIcon();
-void ShowContextMenu(HWND);
-void ShowMainWindow();
-void EnsureSingleInstance();
+HINSTANCE g_instanceHandle = nullptr;
+HWND g_mainWindow = nullptr;
+NOTIFYICONDATAW g_trayIconData = {};
+HANDLE g_singleInstanceMutex = nullptr;
+UINT g_taskbarRestartMessage = 0;
+bool g_startHidden = false;
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (msg == g_uTaskbarRestart) {
+DWORD GetParentProcessId(DWORD processId)
+{
+    HANDLE snapshotHandle = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshotHandle == INVALID_HANDLE_VALUE)
+    {
+        return 0;
+    }
+
+    PROCESSENTRY32W entry = {};
+    entry.dwSize = sizeof(entry);
+
+    DWORD parentProcessId = 0;
+    if (Process32FirstW(snapshotHandle, &entry))
+    {
+        do
+        {
+            if (entry.th32ProcessID == processId)
+            {
+                parentProcessId = entry.th32ParentProcessID;
+                break;
+            }
+        } while (Process32NextW(snapshotHandle, &entry));
+    }
+
+    CloseHandle(snapshotHandle);
+    return parentProcessId;
+}
+
+bool GetRunningServiceProcessId(DWORD* serviceProcessId)
+{
+    if (serviceProcessId == nullptr)
+    {
+        return false;
+    }
+
+    SC_HANDLE scmHandle = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scmHandle == nullptr)
+    {
+        return false;
+    }
+
+    SC_HANDLE serviceHandle = OpenServiceW(scmHandle, kServiceName, SERVICE_QUERY_STATUS);
+    if (serviceHandle == nullptr)
+    {
+        CloseServiceHandle(scmHandle);
+        return false;
+    }
+
+    SERVICE_STATUS_PROCESS status = {};
+    DWORD bytesNeeded = 0;
+    const BOOL ok = QueryServiceStatusEx(
+        serviceHandle,
+        SC_STATUS_PROCESS_INFO,
+        reinterpret_cast<LPBYTE>(&status),
+        sizeof(status),
+        &bytesNeeded);
+
+    CloseServiceHandle(serviceHandle);
+    CloseServiceHandle(scmHandle);
+
+    if (!ok || status.dwCurrentState != SERVICE_RUNNING || status.dwProcessId == 0)
+    {
+        return false;
+    }
+
+    *serviceProcessId = status.dwProcessId;
+    return true;
+}
+
+bool IsServiceParentProcess()
+{
+    const DWORD parentProcessId = GetParentProcessId(GetCurrentProcessId());
+    if (parentProcessId == 0)
+    {
+        return false;
+    }
+
+    DWORD serviceProcessId = 0;
+    return GetRunningServiceProcessId(&serviceProcessId) && parentProcessId == serviceProcessId;
+}
+
+void AddTrayIcon()
+{
+    g_trayIconData.cbSize = sizeof(g_trayIconData);
+    g_trayIconData.hWnd = g_mainWindow;
+    g_trayIconData.uID = 1;
+    g_trayIconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_trayIconData.uCallbackMessage = kTrayIconMessage;
+    g_trayIconData.hIcon = LoadIconW(g_instanceHandle, MAKEINTRESOURCEW(IDI_TRAY_ICON));
+    if (g_trayIconData.hIcon == nullptr)
+    {
+        g_trayIconData.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+
+    wcscpy_s(g_trayIconData.szTip, L"Tray Application");
+    Shell_NotifyIconW(NIM_ADD, &g_trayIconData);
+}
+
+void RemoveTrayIcon()
+{
+    Shell_NotifyIconW(NIM_DELETE, &g_trayIconData);
+}
+
+void ShowMainWindow()
+{
+    ShowWindow(g_mainWindow, SW_SHOW);
+    SetForegroundWindow(g_mainWindow);
+}
+
+void StopServiceAndExit()
+{
+    RequestServiceStopAndWait();
+    RemoveTrayIcon();
+    DestroyWindow(g_mainWindow);
+}
+
+void ShowContextMenu(HWND windowHandle)
+{
+    HMENU menuHandle = CreatePopupMenu();
+    AppendMenuW(menuHandle, MF_STRING, kTrayOpenId, L"Открыть");
+    AppendMenuW(menuHandle, MF_STRING, kTrayExitId, L"Выход");
+
+    POINT cursorPoint = {};
+    GetCursorPos(&cursorPoint);
+
+    SetForegroundWindow(windowHandle);
+    TrackPopupMenu(menuHandle, TPM_RIGHTBUTTON, cursorPoint.x, cursorPoint.y, 0, windowHandle, nullptr);
+    PostMessageW(windowHandle, WM_NULL, 0, 0);
+    DestroyMenu(menuHandle);
+}
+
+void EnsureSingleInstancePerSession()
+{
+    DWORD sessionId = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
+
+    wchar_t mutexName[64] = {};
+    wsprintfW(mutexName, L"Local\\TrayAppWin32_Mutex_Session_%lu", sessionId);
+
+    g_singleInstanceMutex = CreateMutexW(nullptr, TRUE, mutexName);
+    if (GetLastError() != ERROR_ALREADY_EXISTS)
+    {
+        return;
+    }
+
+    HWND existingWindow = FindWindowW(kWindowClassName, nullptr);
+    if (existingWindow != nullptr)
+    {
+        ShowWindow(existingWindow, SW_SHOW);
+        SetForegroundWindow(existingWindow);
+    }
+
+    ExitProcess(0);
+}
+
+bool ShouldStartHidden(LPCWSTR commandLine)
+{
+    return commandLine != nullptr && wcsstr(commandLine, L"/hidden") != nullptr;
+}
+
+bool ShouldStopServiceOnly(LPCWSTR commandLine)
+{
+    return commandLine != nullptr && wcsstr(commandLine, L"/stopservice") != nullptr;
+}
+
+bool ShouldStartServiceOnly(LPCWSTR commandLine)
+{
+    return commandLine != nullptr && wcsstr(commandLine, L"/startservice") != nullptr;
+}
+
+bool StartServiceElevatedAndWait()
+{
+    wchar_t modulePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) == 0)
+    {
+        return false;
+    }
+
+    SHELLEXECUTEINFOW shellExecuteInfo = {};
+    shellExecuteInfo.cbSize = sizeof(shellExecuteInfo);
+    shellExecuteInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+    shellExecuteInfo.lpVerb = L"runas";
+    shellExecuteInfo.lpFile = modulePath;
+    shellExecuteInfo.lpParameters = L"/startservice";
+    shellExecuteInfo.nShow = SW_HIDE;
+
+    if (!ShellExecuteExW(&shellExecuteInfo))
+    {
+        return false;
+    }
+
+    DWORD exitCode = 1;
+    if (shellExecuteInfo.hProcess != nullptr)
+    {
+        WaitForSingleObject(shellExecuteInfo.hProcess, INFINITE);
+        GetExitCodeProcess(shellExecuteInfo.hProcess, &exitCode);
+        CloseHandle(shellExecuteInfo.hProcess);
+    }
+
+    return exitCode == 0;
+}
+
+LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == g_taskbarRestartMessage)
+    {
         AddTrayIcon();
         return 0;
     }
 
-    switch (msg) {
-        case WM_CREATE:
+    switch (message)
+    {
+    case WM_CREATE:
+    {
+        HMENU mainMenu = CreateMenu();
+        HMENU fileMenu = CreatePopupMenu();
+        AppendMenuW(fileMenu, MF_STRING, kFileExitId, L"Выход");
+        AppendMenuW(mainMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(fileMenu), L"Файл");
+        SetMenu(windowHandle, mainMenu);
+        return 0;
+    }
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam))
         {
-            HMENU hMenu = CreateMenu();
-            HMENU hFileMenu = CreatePopupMenu();
-            AppendMenuW(hFileMenu, MF_STRING, ID_FILE_EXIT, L"Выход");
-            AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"Файл");
-            SetMenu(hWnd, hMenu);
-            break;
-        }
-        case WM_COMMAND:
-        {
-            UINT id = LOWORD(wParam);
-            if (id == ID_FILE_EXIT || id == ID_TRAY_EXIT) {
-                RemoveTrayIcon();
-                PostQuitMessage(0);
-            } else if (id == ID_TRAY_OPEN) {
-                ShowMainWindow();
-            }
-            break;
-        }
-        case WM_TRAYICON:
-            if (lParam == WM_LBUTTONUP) {
-                ShowMainWindow();
-            } else if (lParam == WM_RBUTTONUP) {
-                ShowContextMenu(hWnd);
-            }
-            break;
-        case WM_CLOSE:
-            ShowWindow(hWnd, SW_HIDE);
+        case kTrayOpenId:
+            ShowMainWindow();
             return 0;
-        case WM_DESTROY:
-            RemoveTrayIcon();
-            PostQuitMessage(0);
-            break;
+
+        case kTrayExitId:
+        case kFileExitId:
+            StopServiceAndExit();
+            return 0;
+
         default:
-            return DefWindowProcW(hWnd, msg, wParam, lParam);
+            break;
+        }
+        break;
+
+    case kTrayIconMessage:
+        if (lParam == WM_LBUTTONUP)
+        {
+            ShowMainWindow();
+            return 0;
+        }
+
+        if (lParam == WM_RBUTTONUP)
+        {
+            ShowContextMenu(windowHandle);
+            return 0;
+        }
+        break;
+
+    case WM_CLOSE:
+        ShowWindow(windowHandle, SW_HIDE);
+        return 0;
+
+    case WM_DESTROY:
+        RemoveTrayIcon();
+        PostQuitMessage(0);
+        return 0;
+
+    default:
+        break;
     }
-    return 0;
+
+    return DefWindowProcW(windowHandle, message, wParam, lParam);
 }
+}  // namespace
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
-    g_hInst = hInstance;
-    EnsureSingleInstance();
+int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int)
+{
+    g_instanceHandle = instanceHandle;
 
-    WNDCLASSEXW wc = {};
-    wc.cbSize        = sizeof(WNDCLASSEXW);
-    wc.lpfnWndProc   = WndProc;
-    wc.hInstance     = hInstance;
-    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wc.lpszClassName = L"TrayAppWin32Class";
-    RegisterClassExW(&wc);
+    if (ShouldStopServiceOnly(commandLine))
+    {
+        return RequestServiceStopAndWait() == 0 ? 0 : 1;
+    }
 
-    g_hWnd = CreateWindowExW(0, wc.lpszClassName, L"Tray Application",
-                             WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, 400, 300,
-                             NULL, NULL, hInstance, NULL);
-    if (!g_hWnd) return 1;
+    if (ShouldStartServiceOnly(commandLine))
+    {
+        return CheckAndStartService() == 0 ? 0 : 1;
+    }
 
+    const int startResult = CheckAndStartService();
+    if (startResult != 0)
+    {
+        if (startResult == -6 && StartServiceElevatedAndWait())
+        {
+            return 0;
+        }
+
+        MessageBoxW(
+            nullptr,
+            L"Не удалось запустить службу TrayAppService или дождаться состояния Running.",
+            L"Ошибка",
+            MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    if (!IsServiceParentProcess())
+    {
+        return 0;
+    }
+
+    g_startHidden = ShouldStartHidden(commandLine);
+
+    EnsureSingleInstancePerSession();
+
+    WNDCLASSEXW windowClass = {};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.lpfnWndProc = WindowProc;
+    windowClass.hInstance = instanceHandle;
+    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    windowClass.lpszClassName = kWindowClassName;
+
+    if (!RegisterClassExW(&windowClass))
+    {
+        return 1;
+    }
+
+    g_mainWindow = CreateWindowExW(
+        0,
+        kWindowClassName,
+        kWindowTitle,
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        400,
+        300,
+        nullptr,
+        nullptr,
+        instanceHandle,
+        nullptr);
+    if (g_mainWindow == nullptr)
+    {
+        return 1;
+    }
+
+    g_taskbarRestartMessage = RegisterWindowMessageW(L"TaskbarCreated");
     AddTrayIcon();
-    ShowWindow(g_hWnd, SW_HIDE);
-    UpdateWindow(g_hWnd);
 
-    g_uTaskbarRestart = RegisterWindowMessageW(L"TaskbarCreated");
+    ShowWindow(g_mainWindow, g_startHidden ? SW_HIDE : SW_SHOW);
+    UpdateWindow(g_mainWindow);
 
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+    MSG message = {};
+    while (GetMessageW(&message, nullptr, 0, 0))
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
     }
 
-    return (int)msg.wParam;
-}
-
-void AddTrayIcon() {
-    g_nid.cbSize = sizeof(NOTIFYICONDATAW);
-    g_nid.hWnd = g_hWnd;
-    g_nid.uID = 1;
-    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    g_nid.uCallbackMessage = WM_TRAYICON;
-    
-    // Пытаемся загрузить иконку из ресурсов, если не найдена - используем системную иконку
-    g_nid.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_TRAY_ICON));
-    if (!g_nid.hIcon) {
-        g_nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    if (g_singleInstanceMutex != nullptr)
+    {
+        ReleaseMutex(g_singleInstanceMutex);
+        CloseHandle(g_singleInstanceMutex);
     }
-    
-    wcscpy_s(g_nid.szTip, L"Tray Application");
-    Shell_NotifyIconW(NIM_ADD, &g_nid);
-}
 
-void RemoveTrayIcon() {
-    Shell_NotifyIconW(NIM_DELETE, &g_nid);
-}
-
-void ShowContextMenu(HWND hWnd) {
-    HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_OPEN, L"Открыть");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT, L"Выход");
-
-    POINT pt;
-    GetCursorPos(&pt);
-    SetForegroundWindow(hWnd);
-    TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, NULL);
-    PostMessage(hWnd, WM_NULL, 0, 0);
-    DestroyMenu(hMenu);
-}
-
-void ShowMainWindow() {
-    ShowWindow(g_hWnd, SW_SHOW);
-    SetForegroundWindow(g_hWnd);
-}
-
-void EnsureSingleInstance() {
-    g_hMutex = CreateMutexW(NULL, TRUE, L"Global\\TrayAppWin32_Mutex");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        exit(0);
-    }
+    CleanupRPCClient();
+    return static_cast<int>(message.wParam);
 }
