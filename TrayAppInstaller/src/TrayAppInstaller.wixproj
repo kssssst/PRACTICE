@@ -6,7 +6,7 @@
     <EnableDefaultItems>false</EnableDefaultItems>
     <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
     <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)payload</PayloadDir>
-    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);ProjectDir=$(MSBuildThisFileDirectory)</DefineConstants>
+    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);InstallerSourceDir=$(MSBuildThisFileDirectory)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

@@ -18,7 +18,7 @@
     <MediaTemplate EmbedCab="yes" />
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
-    <WixVariable Id="WixUILicenseRtf" Value="$(var.ProjectDir)\License.rtf" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.InstallerSourceDir)License.rtf" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="TrayApp" />
