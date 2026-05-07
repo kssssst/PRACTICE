@@ -6,11 +6,15 @@
     <EnableDefaultItems>false</EnableDefaultItems>
     <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
     <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)payload</PayloadDir>
-    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir)</DefineConstants>
+    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);ProjectDir=$(MSBuildThisFileDirectory)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="Product.wxs" />
     <Compile Include="Payload.generated.wxs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
   </ItemGroup>
 </Project>

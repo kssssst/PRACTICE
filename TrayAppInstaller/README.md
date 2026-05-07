@@ -4,6 +4,8 @@ This folder contains the WiX-based installer project for TrayApp.
 
 The MSI installs every file from `src/payload`, including `TrayApp.exe`, `TrayService.exe`, DLLs, resources, and configuration files copied from the runtime build output. It registers `TrayAppService` as an automatic Windows service, starts it after install, stops it through the Service Control Manager during uninstall, removes it from the Service Control Manager, and removes installed application files.
 
+After installation, run the same `TrayAppSetup.msi` again to open maintenance mode and choose Repair or Remove. The application can also be removed from Windows Installed Apps.
+
 ## Dependencies
 
 The current TrayApp build links the MSVC runtime statically and uses Windows platform APIs only, so there are no third-party runtime installers to chain at the moment. If future builds add runtime dependencies such as Qt, Windows App SDK, .NET, or VC++ redistributables, add them as WiX Burn packages or MSI merge modules so Windows Installer reference counting can avoid removing shared dependencies still used by other applications.
