@@ -177,8 +177,8 @@ foreach ($group in $filesByDirectory) {
         }
 
         if ($file.Name -ieq 'TrayService.exe') {
-            $lines.Add('        <ServiceInstall Id="TrayServiceInstall" Name="TrayService" DisplayName="Tray Service" Description="Starts TrayApp in interactive user sessions." Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" />')
-            $lines.Add('        <ServiceControl Id="TrayServiceControl" Name="TrayService" Start="install" Stop="both" Remove="uninstall" Wait="yes" />')
+            $lines.Add('        <ServiceInstall Id="TrayAppServiceInstall" Name="TrayAppService" DisplayName="TrayApp Service" Description="TrayApp Windows service" Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" />')
+            $lines.Add('        <ServiceControl Id="TrayAppServiceControl" Name="TrayAppService" Start="install" Stop="both" Remove="uninstall" Wait="yes" />')
         }
 
         $lines.Add('      </Component>')

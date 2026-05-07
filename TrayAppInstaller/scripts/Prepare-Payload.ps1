@@ -64,6 +64,42 @@ $excludedExtensions = @(
     '.tlog'
 )
 
+$runtimeExtensions = @(
+    '.exe',
+    '.dll',
+    '.config',
+    '.json',
+    '.xml',
+    '.ini',
+    '.yaml',
+    '.yml',
+    '.txt',
+    '.dat',
+    '.bin',
+    '.pak',
+    '.rcc',
+    '.qm',
+    '.mui',
+    '.pri',
+    '.winmd',
+    '.appxmanifest',
+    '.manifest',
+    '.local',
+    '.ico',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.bmp',
+    '.gif',
+    '.webp',
+    '.svg',
+    '.wav',
+    '.mp3',
+    '.mp4',
+    '.ttf',
+    '.otf'
+)
+
 $runtimeFiles = Get-ChildItem -LiteralPath $resolvedBin -File -Recurse -Force |
     Where-Object {
         $file = $_
@@ -77,7 +113,8 @@ $runtimeFiles = Get-ChildItem -LiteralPath $resolvedBin -File -Recurse -Force |
         }
 
         -not $hasExcludedParent -and
-        -not ($excludedExtensions -contains $file.Extension.ToLowerInvariant())
+        -not ($excludedExtensions -contains $file.Extension.ToLowerInvariant()) -and
+        ($runtimeExtensions -contains $file.Extension.ToLowerInvariant())
     } |
     Sort-Object FullName
 

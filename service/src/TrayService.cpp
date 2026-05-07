@@ -559,7 +559,7 @@ void UpdateServiceState(DWORD state, DWORD win32ExitCode = NO_ERROR) {
     g_serviceStatus.dwCurrentState = state;
     g_serviceStatus.dwWin32ExitCode = win32ExitCode;
     g_serviceStatus.dwWaitHint = (state == SERVICE_RUNNING || state == SERVICE_STOPPED) ? 0 : 5000;
-    g_serviceStatus.dwControlsAccepted = (state == SERVICE_RUNNING) ? SERVICE_ACCEPT_SESSIONCHANGE : 0;
+    g_serviceStatus.dwControlsAccepted = (state == SERVICE_RUNNING) ? (SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SESSIONCHANGE) : 0;
     if (g_statusHandle) SetServiceStatus(g_statusHandle, &g_serviceStatus);
 }
 
@@ -801,6 +801,12 @@ void* __RPC_USER MIDL_user_allocate(size_t s) { return malloc(s); }
 void __RPC_USER MIDL_user_free(void* p) { free(p); }
 
 DWORD WINAPI ServiceControlHandlerEx(DWORD ctrl, DWORD evtType, LPVOID evtData, LPVOID) {
+    if (ctrl == SERVICE_CONTROL_STOP) {
+        UpdateServiceState(SERVICE_STOP_PENDING);
+        if (g_stopEvent) SetEvent(g_stopEvent);
+        return NO_ERROR;
+    }
+
     if (ctrl == SERVICE_CONTROL_SESSIONCHANGE && (evtType == WTS_SESSION_LOGON || evtType == WTS_CONSOLE_CONNECT || evtType == WTS_REMOTE_CONNECT)) {
         auto* notif = static_cast<WTSSESSION_NOTIFICATION*>(evtData);
         if (notif && notif->dwSessionId != 0) LaunchAppInSession(notif->dwSessionId);

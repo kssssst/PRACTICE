@@ -26,17 +26,5 @@
     <Feature Id="MainFeature" Title="TrayApp" Level="1">
       <ComponentGroupRef Id="AppPayload" />
     </Feature>
-
-    <CustomAction
-      Id="SignalTrayServiceStopEvent"
-      Directory="INSTALLFOLDER"
-      Execute="deferred"
-      Impersonate="no"
-      Return="ignore"
-      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;try { $e = [System.Threading.EventWaitHandle]::OpenExisting('Global\TrayServiceStopEvent'); $e.Set() | Out-Null; $e.Dispose(); Start-Sleep -Seconds 5 } catch { }&quot;" />
-
-    <InstallExecuteSequence>
-      <Custom Action="SignalTrayServiceStopEvent" Before="StopServices" Condition="REMOVE=&quot;ALL&quot;" />
-    </InstallExecuteSequence>
   </Package>
 </Wix>
