@@ -10,6 +10,8 @@ if %errorlevel% neq 0 (
 set "SCRIPT_DIR=%~dp0"
 set "APP_PATH=%SCRIPT_DIR%TrayApp.exe"
 
+if not exist "%APP_PATH%" set "APP_PATH=%SCRIPT_DIR%build\TrayApp.exe"
+
 sc query TrayAppService >nul 2>&1
 if %errorlevel% neq 0 (
     echo TrayAppService is not installed.

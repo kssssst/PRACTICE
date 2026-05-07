@@ -130,6 +130,148 @@ int GetServiceStatusViaRPC(long* status)
     return 0;
 }
 
+namespace
+{
+void CopyOut(wchar_t* dest, int destChars, const wchar_t* value)
+{
+    if (dest == nullptr || destChars <= 0)
+    {
+        return;
+    }
+    wcsncpy_s(dest, static_cast<size_t>(destChars), value != nullptr ? value : L"", _TRUNCATE);
+}
+}  // namespace
+
+int GetCurrentUserViaRPC(wchar_t* email, int emailChars, wchar_t* message, int messageChars, int* authenticated)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    AuthUserInfo info = {};
+    __try
+    {
+        GetCurrentUser(&info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    if (authenticated != nullptr)
+    {
+        *authenticated = info.authenticated;
+    }
+    CopyOut(email, emailChars, info.email);
+    CopyOut(message, messageChars, info.message);
+    return info.errorCode == 0 ? 0 : info.errorCode;
+}
+
+int LoginViaRPC(const wchar_t* email, const wchar_t* password, wchar_t* message, int messageChars, int* authenticated)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    AuthUserInfo info = {};
+    __try
+    {
+        Login(const_cast<wchar_t*>(email), const_cast<wchar_t*>(password), &info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    if (authenticated != nullptr)
+    {
+        *authenticated = info.authenticated;
+    }
+    CopyOut(message, messageChars, info.message);
+    return info.errorCode == 0 ? 0 : info.errorCode;
+}
+
+int LogoutViaRPC()
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    __try
+    {
+        Logout();
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    return 0;
+}
+
+int GetLicenseInfoViaRPC(int* hasLicense, int* blocked, wchar_t* expirationDate, int expirationChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    LicenseInfo info = {};
+    __try
+    {
+        GetLicenseInfo(&info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    if (hasLicense != nullptr)
+    {
+        *hasLicense = info.hasLicense;
+    }
+    if (blocked != nullptr)
+    {
+        *blocked = info.blocked;
+    }
+    CopyOut(expirationDate, expirationChars, info.expirationDate);
+    CopyOut(message, messageChars, info.message);
+    return info.errorCode == 0 ? 0 : info.errorCode;
+}
+
+int ActivateProductViaRPC(const wchar_t* activationKey, int* hasLicense, int* blocked, wchar_t* expirationDate, int expirationChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    LicenseInfo info = {};
+    __try
+    {
+        ActivateProduct(const_cast<wchar_t*>(activationKey), &info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    if (hasLicense != nullptr)
+    {
+        *hasLicense = info.hasLicense;
+    }
+    if (blocked != nullptr)
+    {
+        *blocked = info.blocked;
+    }
+    CopyOut(expirationDate, expirationChars, info.expirationDate);
+    CopyOut(message, messageChars, info.message);
+    return info.errorCode == 0 ? 0 : info.errorCode;
+}
+
 void CleanupRPCClient()
 {
     if (g_bindingHandle != nullptr)

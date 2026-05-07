@@ -2,6 +2,10 @@
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <winsvc.h>
+#include <commctrl.h>
+
+#include <iterator>
+#include <string>
 
 #include "resource.h"
 #include "TrayServiceClient.h"
@@ -16,8 +20,13 @@ constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT kTrayExitId = 1001;
 constexpr UINT kTrayOpenId = 1002;
 constexpr UINT kFileExitId = 2001;
+constexpr UINT kLoginButtonId = 3001;
+constexpr UINT kLogoutButtonId = 3002;
+constexpr UINT kActivateButtonId = 3003;
+constexpr UINT kRefreshButtonId = 3004;
+constexpr UINT kPollTimerId = 4001;
 constexpr wchar_t kWindowClassName[] = L"TrayAppWin32Class";
-constexpr wchar_t kWindowTitle[] = L"Tray Application";
+constexpr wchar_t kWindowTitle[] = L"ZIOVPO Security";
 constexpr wchar_t kServiceName[] = L"TrayAppService";
 
 HINSTANCE g_instanceHandle = nullptr;
@@ -26,6 +35,19 @@ NOTIFYICONDATAW g_trayIconData = {};
 HANDLE g_singleInstanceMutex = nullptr;
 UINT g_taskbarRestartMessage = 0;
 bool g_startHidden = false;
+HWND g_statusLabel = nullptr;
+HWND g_emailEdit = nullptr;
+HWND g_passwordEdit = nullptr;
+HWND g_loginButton = nullptr;
+HWND g_logoutButton = nullptr;
+HWND g_licenseLabel = nullptr;
+HWND g_activationEdit = nullptr;
+HWND g_activateButton = nullptr;
+HWND g_refreshButton = nullptr;
+HWND g_antivirusLabel = nullptr;
+bool g_authenticated = false;
+bool g_hasLicense = false;
+bool g_licenseBlocked = false;
 
 DWORD GetParentProcessId(DWORD processId)
 {
@@ -134,6 +156,119 @@ void ShowMainWindow()
 {
     ShowWindow(g_mainWindow, SW_SHOW);
     SetForegroundWindow(g_mainWindow);
+}
+
+void SetWindowTextSafe(HWND windowHandle, const wchar_t* text)
+{
+    if (windowHandle != nullptr)
+    {
+        SetWindowTextW(windowHandle, text != nullptr ? text : L"");
+    }
+}
+
+std::wstring ReadEditText(HWND editHandle)
+{
+    int length = GetWindowTextLengthW(editHandle);
+    std::wstring value(static_cast<size_t>(length + 1), L'\0');
+    if (length > 0)
+    {
+        GetWindowTextW(editHandle, value.data(), length + 1);
+    }
+    value.resize(static_cast<size_t>(length));
+    return value;
+}
+
+void UpdateControlVisibility()
+{
+    ShowWindow(g_emailEdit, g_authenticated ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_passwordEdit, g_authenticated ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_loginButton, g_authenticated ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_logoutButton, g_authenticated ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_activationEdit, (g_authenticated && !g_hasLicense) ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_activateButton, (g_authenticated && !g_hasLicense) ? SW_SHOW : SW_HIDE);
+}
+
+void RefreshUiState()
+{
+    wchar_t email[256] = {};
+    wchar_t message[512] = {};
+    int authenticated = 0;
+    GetCurrentUserViaRPC(email, static_cast<int>(std::size(email)), message, static_cast<int>(std::size(message)), &authenticated);
+    g_authenticated = authenticated != 0;
+
+    if (!g_authenticated)
+    {
+        g_hasLicense = false;
+        g_licenseBlocked = false;
+        SetWindowTextSafe(g_statusLabel, L"Войдите в учетную запись");
+        SetWindowTextSafe(g_licenseLabel, L"Лицензия: недоступна без входа");
+        SetWindowTextSafe(g_antivirusLabel, L"Антивирус: заблокирован");
+        UpdateControlVisibility();
+        return;
+    }
+
+    wchar_t statusText[512] = {};
+    swprintf_s(statusText, L"Пользователь: %s", email[0] != L'\0' ? email : L"(неизвестно)");
+    SetWindowTextSafe(g_statusLabel, statusText);
+
+    wchar_t expiration[64] = {};
+    int hasLicense = 0;
+    int blocked = 0;
+    GetLicenseInfoViaRPC(&hasLicense, &blocked, expiration, static_cast<int>(std::size(expiration)),
+                         message, static_cast<int>(std::size(message)));
+    g_hasLicense = hasLicense != 0 && blocked == 0;
+    g_licenseBlocked = blocked != 0;
+
+    wchar_t licenseText[640] = {};
+    if (g_hasLicense)
+    {
+        swprintf_s(licenseText, L"Лицензия активна. Действует до: %s", expiration[0] != L'\0' ? expiration : L"(дата не указана)");
+        SetWindowTextSafe(g_antivirusLabel, L"Антивирус: разблокирован");
+    }
+    else if (g_licenseBlocked)
+    {
+        swprintf_s(licenseText, L"Лицензия заблокирована");
+        SetWindowTextSafe(g_antivirusLabel, L"Антивирус: заблокирован");
+    }
+    else
+    {
+        swprintf_s(licenseText, L"Лицензия отсутствует: %s", message[0] != L'\0' ? message : L"требуется активация");
+        SetWindowTextSafe(g_antivirusLabel, L"Антивирус: заблокирован");
+    }
+    SetWindowTextSafe(g_licenseLabel, licenseText);
+    UpdateControlVisibility();
+}
+
+void CreateMainControls(HWND windowHandle)
+{
+    auto controlId = [](UINT id) -> HMENU {
+        return reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id));
+    };
+
+    g_statusLabel = CreateWindowW(L"STATIC", L"Проверка состояния...", WS_CHILD | WS_VISIBLE,
+                                  24, 24, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_emailEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                  24, 64, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_passwordEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
+                                     24, 100, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_loginButton = CreateWindowW(L"BUTTON", L"Войти", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  300, 64, 120, 62, windowHandle, controlId(kLoginButtonId), g_instanceHandle, nullptr);
+    g_logoutButton = CreateWindowW(L"BUTTON", L"Выйти", WS_CHILD | BS_PUSHBUTTON,
+                                   300, 64, 120, 30, windowHandle, controlId(kLogoutButtonId), g_instanceHandle, nullptr);
+    g_licenseLabel = CreateWindowW(L"STATIC", L"Лицензия: проверка...", WS_CHILD | WS_VISIBLE,
+                                   24, 150, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_activationEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL,
+                                       24, 190, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_activateButton = CreateWindowW(L"BUTTON", L"Активировать", WS_CHILD | BS_PUSHBUTTON,
+                                     300, 190, 120, 26, windowHandle, controlId(kActivateButtonId), g_instanceHandle, nullptr);
+    g_refreshButton = CreateWindowW(L"BUTTON", L"Обновить", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                    430, 64, 120, 30, windowHandle, controlId(kRefreshButtonId), g_instanceHandle, nullptr);
+    g_antivirusLabel = CreateWindowW(L"STATIC", L"Антивирус: заблокирован", WS_CHILD | WS_VISIBLE,
+                                     24, 240, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+
+    SendMessageW(g_emailEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Email"));
+    SendMessageW(g_passwordEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Пароль"));
+    SendMessageW(g_activationEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Код активации"));
 }
 
 void StopServiceAndExit()
@@ -246,6 +381,9 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
         AppendMenuW(fileMenu, MF_STRING, kFileExitId, L"Выход");
         AppendMenuW(mainMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(fileMenu), L"Файл");
         SetMenu(windowHandle, mainMenu);
+        CreateMainControls(windowHandle);
+        SetTimer(windowHandle, kPollTimerId, 30000, nullptr);
+        RefreshUiState();
         return 0;
     }
 
@@ -261,8 +399,59 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
             StopServiceAndExit();
             return 0;
 
+        case kLoginButtonId:
+        {
+            const std::wstring email = ReadEditText(g_emailEdit);
+            const std::wstring password = ReadEditText(g_passwordEdit);
+            wchar_t message[512] = {};
+            int authenticated = 0;
+            int result = LoginViaRPC(email.c_str(), password.c_str(), message, static_cast<int>(std::size(message)), &authenticated);
+            if (result != 0 || !authenticated)
+            {
+                MessageBoxW(windowHandle, message[0] != L'\0' ? message : L"Не удалось войти", L"Ошибка входа", MB_OK | MB_ICONERROR);
+            }
+            SetWindowTextW(g_passwordEdit, L"");
+            RefreshUiState();
+            return 0;
+        }
+
+        case kLogoutButtonId:
+            LogoutViaRPC();
+            RefreshUiState();
+            return 0;
+
+        case kActivateButtonId:
+        {
+            const std::wstring key = ReadEditText(g_activationEdit);
+            wchar_t expiration[64] = {};
+            wchar_t message[512] = {};
+            int hasLicense = 0;
+            int blocked = 0;
+            int result = ActivateProductViaRPC(key.c_str(), &hasLicense, &blocked, expiration, static_cast<int>(std::size(expiration)),
+                                               message, static_cast<int>(std::size(message)));
+            if (result != 0 || !hasLicense || blocked)
+            {
+                MessageBoxW(windowHandle, message[0] != L'\0' ? message : L"Не удалось активировать продукт", L"Ошибка активации", MB_OK | MB_ICONERROR);
+            }
+            SetWindowTextW(g_activationEdit, L"");
+            RefreshUiState();
+            return 0;
+        }
+
+        case kRefreshButtonId:
+            RefreshUiState();
+            return 0;
+
         default:
             break;
+        }
+        break;
+
+    case WM_TIMER:
+        if (wParam == kPollTimerId)
+        {
+            RefreshUiState();
+            return 0;
         }
         break;
 
@@ -285,6 +474,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
         return 0;
 
     case WM_DESTROY:
+        KillTimer(windowHandle, kPollTimerId);
         RemoveTrayIcon();
         PostQuitMessage(0);
         return 0;
@@ -336,6 +526,11 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
 
     EnsureSingleInstancePerSession();
 
+    INITCOMMONCONTROLSEX commonControls = {};
+    commonControls.dwSize = sizeof(commonControls);
+    commonControls.dwICC = ICC_STANDARD_CLASSES;
+    InitCommonControlsEx(&commonControls);
+
     WNDCLASSEXW windowClass = {};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = WindowProc;
@@ -356,8 +551,8 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        400,
-        300,
+        600,
+        360,
         nullptr,
         nullptr,
         instanceHandle,
