@@ -128,6 +128,8 @@ std::wstring g_schedulePath;
 ULONGLONG g_nextScheduledScan = 0;
 bool g_monitorEnabled = false;
 std::wstring g_monitorPath;
+ScanResult g_lastBackgroundScanResult = {};
+ULONGLONG g_lastBackgroundScanAt = 0;
 
 ULONGLONG NowMs() {
     return GetTickCount64();
@@ -340,6 +342,16 @@ void MergeScanResult(ScanResult* target, const ScanResult& item) {
     }
 }
 
+void StoreBackgroundScanResult(const ScanResult& result, const std::wstring& source) {
+    EnterCriticalSection(&g_avLock);
+    g_lastBackgroundScanResult = result;
+    g_lastBackgroundScanAt = NowMs();
+    if (g_lastBackgroundScanResult.message[0] == L'\0') {
+        CopyString(g_lastBackgroundScanResult.message, std::size(g_lastBackgroundScanResult.message), source);
+    }
+    LeaveCriticalSection(&g_avLock);
+}
+
 bool ScanBufferWithDatabase(const std::wstring& path, const std::vector<unsigned char>& data, ScanResult* result) {
     if (!result) return false;
 
@@ -458,14 +470,15 @@ void ScanDirectoryRecursive(const std::wstring& path, ScanResult* result) {
 }
 
 void RunConfiguredScan(const std::wstring& path) {
-    ScanResult ignored = {};
+    ScanResult result = {};
     DWORD attributes = GetFileAttributesW(path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) return;
     if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
-        ScanDirectoryRecursive(path, &ignored);
+        ScanDirectoryRecursive(path, &result);
     } else {
-        ScanSingleFile(path, &ignored);
+        ScanSingleFile(path, &result);
     }
+    StoreBackgroundScanResult(result, path);
 }
 
 DWORD WINAPI MonitorThreadProc(LPVOID) {
@@ -1309,6 +1322,19 @@ error_status_t ConfigureDirectoryMonitoring(long enabled, wchar_t* path, wchar_t
     g_monitorPath = path;
     LeaveCriticalSection(&g_avLock);
     CopyString(message, 512, g_monitorEnabled ? L"Мониторинг директории включен" : L"Мониторинг директории выключен");
+    return RPC_S_OK;
+}
+
+error_status_t GetLastBackgroundScanResult(ScanResult* result) {
+    if (!result) return RPC_X_NULL_REF_POINTER;
+    ZeroMemory(result, sizeof(*result));
+    EnterCriticalSection(&g_avLock);
+    if (g_lastBackgroundScanAt != 0) {
+        *result = g_lastBackgroundScanResult;
+    } else {
+        CopyString(result->message, std::size(result->message), L"Фоновых проверок еще не было");
+    }
+    LeaveCriticalSection(&g_avLock);
     return RPC_S_OK;
 }
 }

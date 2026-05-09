@@ -64,4 +64,5 @@ interface ITrayService
     error_status_t ConfigureDirectoryMonitoring([in] long enabled,
                                                 [in, string] wchar_t *path,
                                                 [out, string] wchar_t message[512]);
+    error_status_t GetLastBackgroundScanResult([out] ScanResult *result);
 };

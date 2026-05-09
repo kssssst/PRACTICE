@@ -21,6 +21,7 @@ int ScanDirectoryViaRPC(const wchar_t *path, int *scannedFiles, int *infectedFil
 int ScanFixedDrivesViaRPC(int *scannedFiles, int *infectedFiles, wchar_t *threatName, int threatNameChars, wchar_t *objectPath, int objectPathChars, wchar_t *message, int messageChars);
 int ConfigureScheduledScanViaRPC(int enabled, int intervalMinutes, const wchar_t *path, wchar_t *message, int messageChars);
 int ConfigureDirectoryMonitoringViaRPC(int enabled, const wchar_t *path, wchar_t *message, int messageChars);
+int GetLastBackgroundScanResultViaRPC(int *scannedFiles, int *infectedFiles, wchar_t *threatName, int threatNameChars, wchar_t *objectPath, int objectPathChars, wchar_t *message, int messageChars);
 void CleanupRPCClient();
 int CheckAndStartService();
 int IsServiceRunning();

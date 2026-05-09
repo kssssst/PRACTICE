@@ -411,6 +411,26 @@ int ConfigureDirectoryMonitoringViaRPC(int enabled, const wchar_t* path, wchar_t
     return 0;
 }
 
+int GetLastBackgroundScanResultViaRPC(int* scannedFiles, int* infectedFiles, wchar_t* threatName, int threatNameChars, wchar_t* objectPath, int objectPathChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    ScanResult result = {};
+    __try
+    {
+        GetLastBackgroundScanResult(&result);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    return CopyScanResult(result, scannedFiles, infectedFiles, threatName, threatNameChars, objectPath, objectPathChars, message, messageChars);
+}
+
 void CleanupRPCClient()
 {
     if (g_bindingHandle != nullptr)

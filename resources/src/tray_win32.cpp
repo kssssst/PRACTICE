@@ -469,6 +469,22 @@ void ShowScanOutcome(int resultCode, int scannedFiles, int infectedFiles, const 
     SetWindowTextSafe(g_scanResultLabel, text);
 }
 
+void RefreshBackgroundScanOutcome()
+{
+    int scanned = 0;
+    int infected = 0;
+    wchar_t threat[128] = {};
+    wchar_t objectPath[MAX_PATH] = {};
+    wchar_t message[1024] = {};
+    int result = GetLastBackgroundScanResultViaRPC(&scanned, &infected, threat, static_cast<int>(std::size(threat)),
+                                                   objectPath, static_cast<int>(std::size(objectPath)),
+                                                   message, static_cast<int>(std::size(message)));
+    if (result == 0 && (scanned > 0 || infected > 0))
+    {
+        ShowScanOutcome(result, scanned, infected, threat, objectPath, message);
+    }
+}
+
 void RunPathScan(bool directoryMode)
 {
     const std::wstring path = ReadEditText(g_scanPathEdit);
@@ -567,6 +583,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
 
         case kRefreshButtonId:
             RefreshUiState();
+            RefreshBackgroundScanOutcome();
             return 0;
 
         case kScanFileButtonId:
@@ -620,6 +637,7 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
         if (wParam == kPollTimerId)
         {
             RefreshUiState();
+            RefreshBackgroundScanOutcome();
             return 0;
         }
         break;
