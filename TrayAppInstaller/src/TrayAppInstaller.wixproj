@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputName>TrayAppSetup</OutputName>
     <OutputType>Package</OutputType>
-    <InstallerPlatform>arm64</InstallerPlatform>
+    <InstallerPlatform Condition="'$(InstallerPlatform)' == ''">arm64</InstallerPlatform>
     <EnableDefaultItems>false</EnableDefaultItems>
     <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.0</ProductVersion>
     <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)payload</PayloadDir>

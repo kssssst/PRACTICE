@@ -7,12 +7,15 @@ on:
 
 env:
   BUILD_CONFIGURATION: Release
-  BUILD_PLATFORM: ARM64
   PRODUCT_VERSION: 1.0.${{ github.run_number }}
 
 jobs:
   build:
-    runs-on: windows-11-arm
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
     
     steps:
     - uses: actions/checkout@v4
@@ -21,6 +24,8 @@ jobs:
       run: |
         cmake -S . -B build -G "Visual Studio 17 2022" -A $env:BUILD_PLATFORM
       shell: powershell
+      env:
+        BUILD_PLATFORM: ${{ matrix.platform }}
     
     - name: Build
       run: |
@@ -66,6 +71,7 @@ jobs:
       run: |
         dotnet build .\TrayAppInstaller\src\TrayAppInstaller.wixproj `
           -c $env:BUILD_CONFIGURATION `
+          -p:InstallerPlatform=${{ matrix.platform == 'ARM64' && 'arm64' || 'x64' }} `
           -p:ProductVersion=$env:PRODUCT_VERSION `
           -p:PayloadDir="$PWD\TrayAppInstaller\src\payload"
       shell: powershell
@@ -98,6 +104,6 @@ jobs:
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: TrayAppInstaller-ARM64
+        name: TrayAppInstaller-${{ matrix.platform }}
         path: TrayAppInstaller/src/bin/${{ env.BUILD_CONFIGURATION }}/TrayAppSetup.msi
         retention-days: 90

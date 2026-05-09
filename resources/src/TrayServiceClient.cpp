@@ -272,6 +272,145 @@ int ActivateProductViaRPC(const wchar_t* activationKey, int* hasLicense, int* bl
     return info.errorCode == 0 ? 0 : info.errorCode;
 }
 
+int GetAvDatabaseInfoViaRPC(int* loaded, int* recordCount, wchar_t* releaseDate, int releaseDateChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    AvDatabaseInfo info = {};
+    __try
+    {
+        GetAvDatabaseInfo(&info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    if (loaded != nullptr) *loaded = info.loaded;
+    if (recordCount != nullptr) *recordCount = info.recordCount;
+    CopyOut(releaseDate, releaseDateChars, info.releaseDate);
+    CopyOut(message, messageChars, info.message);
+    return info.loaded ? 0 : 1;
+}
+
+namespace
+{
+int CopyScanResult(const ScanResult& result, int* scannedFiles, int* infectedFiles, wchar_t* threatName, int threatNameChars, wchar_t* objectPath, int objectPathChars, wchar_t* message, int messageChars)
+{
+    if (scannedFiles != nullptr) *scannedFiles = result.scannedFiles;
+    if (infectedFiles != nullptr) *infectedFiles = result.infectedFiles;
+    CopyOut(threatName, threatNameChars, result.threatName);
+    CopyOut(objectPath, objectPathChars, result.objectPath);
+    CopyOut(message, messageChars, result.message);
+    return result.errorCode == 0 ? 0 : result.errorCode;
+}
+}  // namespace
+
+int ScanFileViaRPC(const wchar_t* path, int* scannedFiles, int* infectedFiles, wchar_t* threatName, int threatNameChars, wchar_t* objectPath, int objectPathChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    ScanResult result = {};
+    __try
+    {
+        ScanFile(const_cast<wchar_t*>(path), &result);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    return CopyScanResult(result, scannedFiles, infectedFiles, threatName, threatNameChars, objectPath, objectPathChars, message, messageChars);
+}
+
+int ScanDirectoryViaRPC(const wchar_t* path, int* scannedFiles, int* infectedFiles, wchar_t* threatName, int threatNameChars, wchar_t* objectPath, int objectPathChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    ScanResult result = {};
+    __try
+    {
+        ScanDirectory(const_cast<wchar_t*>(path), &result);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    return CopyScanResult(result, scannedFiles, infectedFiles, threatName, threatNameChars, objectPath, objectPathChars, message, messageChars);
+}
+
+int ScanFixedDrivesViaRPC(int* scannedFiles, int* infectedFiles, wchar_t* threatName, int threatNameChars, wchar_t* objectPath, int objectPathChars, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    ScanResult result = {};
+    __try
+    {
+        ScanFixedDrives(&result);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    return CopyScanResult(result, scannedFiles, infectedFiles, threatName, threatNameChars, objectPath, objectPathChars, message, messageChars);
+}
+
+int ConfigureScheduledScanViaRPC(int enabled, int intervalMinutes, const wchar_t* path, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    wchar_t rpcMessage[512] = {};
+    __try
+    {
+        ConfigureScheduledScan(enabled, intervalMinutes, const_cast<wchar_t*>(path), rpcMessage);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    CopyOut(message, messageChars, rpcMessage);
+    return 0;
+}
+
+int ConfigureDirectoryMonitoringViaRPC(int enabled, const wchar_t* path, wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    wchar_t rpcMessage[512] = {};
+    __try
+    {
+        ConfigureDirectoryMonitoring(enabled, const_cast<wchar_t*>(path), rpcMessage);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    CopyOut(message, messageChars, rpcMessage);
+    return 0;
+}
+
 void CleanupRPCClient()
 {
     if (g_bindingHandle != nullptr)

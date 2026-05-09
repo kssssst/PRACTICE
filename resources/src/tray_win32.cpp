@@ -24,6 +24,11 @@ constexpr UINT kLoginButtonId = 3001;
 constexpr UINT kLogoutButtonId = 3002;
 constexpr UINT kActivateButtonId = 3003;
 constexpr UINT kRefreshButtonId = 3004;
+constexpr UINT kScanFileButtonId = 3005;
+constexpr UINT kScanDirectoryButtonId = 3006;
+constexpr UINT kScanDrivesButtonId = 3007;
+constexpr UINT kScheduleButtonId = 3008;
+constexpr UINT kMonitorButtonId = 3009;
 constexpr UINT kPollTimerId = 4001;
 constexpr wchar_t kWindowClassName[] = L"TrayAppWin32Class";
 constexpr wchar_t kWindowTitle[] = L"ZIOVPO Security";
@@ -45,6 +50,15 @@ HWND g_activationEdit = nullptr;
 HWND g_activateButton = nullptr;
 HWND g_refreshButton = nullptr;
 HWND g_antivirusLabel = nullptr;
+HWND g_databaseLabel = nullptr;
+HWND g_scanPathEdit = nullptr;
+HWND g_scanFileButton = nullptr;
+HWND g_scanDirectoryButton = nullptr;
+HWND g_scanDrivesButton = nullptr;
+HWND g_scanResultLabel = nullptr;
+HWND g_scheduleIntervalEdit = nullptr;
+HWND g_scheduleButton = nullptr;
+HWND g_monitorButton = nullptr;
 bool g_authenticated = false;
 bool g_hasLicense = false;
 bool g_licenseBlocked = false;
@@ -203,6 +217,7 @@ void RefreshUiState()
         SetWindowTextSafe(g_statusLabel, L"Войдите в учетную запись");
         SetWindowTextSafe(g_licenseLabel, L"Лицензия: недоступна без входа");
         SetWindowTextSafe(g_antivirusLabel, L"Антивирус: заблокирован");
+        SetWindowTextSafe(g_databaseLabel, L"Базы: недоступны без активации");
         UpdateControlVisibility();
         return;
     }
@@ -224,16 +239,30 @@ void RefreshUiState()
     {
         swprintf_s(licenseText, L"Лицензия активна. Действует до: %s", expiration[0] != L'\0' ? expiration : L"(дата не указана)");
         SetWindowTextSafe(g_antivirusLabel, L"Антивирус: разблокирован");
+        int loaded = 0;
+        int recordCount = 0;
+        wchar_t releaseDate[64] = {};
+        wchar_t avMessage[512] = {};
+        GetAvDatabaseInfoViaRPC(&loaded, &recordCount, releaseDate, static_cast<int>(std::size(releaseDate)),
+                                avMessage, static_cast<int>(std::size(avMessage)));
+        wchar_t databaseText[512] = {};
+        swprintf_s(databaseText, L"Базы: %s, записей: %d, дата: %s",
+                   loaded ? L"загружены" : L"не загружены",
+                   recordCount,
+                   releaseDate[0] != L'\0' ? releaseDate : L"(нет)");
+        SetWindowTextSafe(g_databaseLabel, databaseText);
     }
     else if (g_licenseBlocked)
     {
         swprintf_s(licenseText, L"Лицензия заблокирована");
         SetWindowTextSafe(g_antivirusLabel, L"Антивирус: заблокирован");
+        SetWindowTextSafe(g_databaseLabel, L"Базы: недоступны");
     }
     else
     {
         swprintf_s(licenseText, L"Лицензия отсутствует: %s", message[0] != L'\0' ? message : L"требуется активация");
         SetWindowTextSafe(g_antivirusLabel, L"Антивирус: заблокирован");
+        SetWindowTextSafe(g_databaseLabel, L"Базы: не загружены");
     }
     SetWindowTextSafe(g_licenseLabel, licenseText);
     UpdateControlVisibility();
@@ -265,10 +294,30 @@ void CreateMainControls(HWND windowHandle)
                                     430, 64, 120, 30, windowHandle, controlId(kRefreshButtonId), g_instanceHandle, nullptr);
     g_antivirusLabel = CreateWindowW(L"STATIC", L"Антивирус: заблокирован", WS_CHILD | WS_VISIBLE,
                                      24, 240, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_databaseLabel = CreateWindowW(L"STATIC", L"Базы: проверка...", WS_CHILD | WS_VISIBLE,
+                                    24, 268, 540, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_scanPathEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                     24, 306, 390, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_scanFileButton = CreateWindowW(L"BUTTON", L"Сканировать файл", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                     430, 306, 130, 26, windowHandle, controlId(kScanFileButtonId), g_instanceHandle, nullptr);
+    g_scanDirectoryButton = CreateWindowW(L"BUTTON", L"Сканировать папку", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                          24, 342, 150, 28, windowHandle, controlId(kScanDirectoryButtonId), g_instanceHandle, nullptr);
+    g_scanDrivesButton = CreateWindowW(L"BUTTON", L"Все диски", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                       184, 342, 110, 28, windowHandle, controlId(kScanDrivesButtonId), g_instanceHandle, nullptr);
+    g_scheduleIntervalEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"60", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER,
+                                             304, 342, 54, 28, windowHandle, nullptr, g_instanceHandle, nullptr);
+    g_scheduleButton = CreateWindowW(L"BUTTON", L"Расписание", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                     366, 342, 96, 28, windowHandle, controlId(kScheduleButtonId), g_instanceHandle, nullptr);
+    g_monitorButton = CreateWindowW(L"BUTTON", L"Мониторинг", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                    470, 342, 90, 28, windowHandle, controlId(kMonitorButtonId), g_instanceHandle, nullptr);
+    g_scanResultLabel = CreateWindowW(L"STATIC", L"Сканирование: готово", WS_CHILD | WS_VISIBLE,
+                                      24, 382, 540, 44, windowHandle, nullptr, g_instanceHandle, nullptr);
 
     SendMessageW(g_emailEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Email"));
     SendMessageW(g_passwordEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Пароль"));
     SendMessageW(g_activationEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Код активации"));
+    SendMessageW(g_scanPathEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Путь к файлу или папке"));
+    SendMessageW(g_scheduleIntervalEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"мин"));
 }
 
 void StopServiceAndExit()
@@ -364,6 +413,48 @@ bool StartServiceElevatedAndWait()
     return exitCode == 0;
 }
 
+void ShowScanOutcome(int resultCode, int scannedFiles, int infectedFiles, const wchar_t* threatName, const wchar_t* objectPath, const wchar_t* message)
+{
+    wchar_t text[1024] = {};
+    if (resultCode != 0 && infectedFiles == 0)
+    {
+        swprintf_s(text, L"Ошибка сканирования (%d): %s", resultCode, message != nullptr && message[0] != L'\0' ? message : L"нет описания");
+    }
+    else if (infectedFiles > 0)
+    {
+        swprintf_s(text, L"Обнаружено: %s\nФайл: %s",
+                   threatName != nullptr && threatName[0] != L'\0' ? threatName : L"(сигнатура)",
+                   objectPath != nullptr && objectPath[0] != L'\0' ? objectPath : L"(не указан)");
+    }
+    else
+    {
+        swprintf_s(text, L"Угрозы не обнаружены. Проверено файлов: %d", scannedFiles);
+    }
+    SetWindowTextSafe(g_scanResultLabel, text);
+}
+
+void RunPathScan(bool directoryMode)
+{
+    const std::wstring path = ReadEditText(g_scanPathEdit);
+    if (path.empty())
+    {
+        MessageBoxW(g_mainWindow, L"Укажите путь к файлу или папке.", L"Сканирование", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    int scanned = 0;
+    int infected = 0;
+    wchar_t threat[128] = {};
+    wchar_t objectPath[MAX_PATH] = {};
+    wchar_t message[1024] = {};
+    int result = directoryMode
+        ? ScanDirectoryViaRPC(path.c_str(), &scanned, &infected, threat, static_cast<int>(std::size(threat)),
+                              objectPath, static_cast<int>(std::size(objectPath)), message, static_cast<int>(std::size(message)))
+        : ScanFileViaRPC(path.c_str(), &scanned, &infected, threat, static_cast<int>(std::size(threat)),
+                         objectPath, static_cast<int>(std::size(objectPath)), message, static_cast<int>(std::size(message)));
+    ShowScanOutcome(result, scanned, infected, threat, objectPath, message);
+}
+
 LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == g_taskbarRestartMessage)
@@ -441,6 +532,48 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
         case kRefreshButtonId:
             RefreshUiState();
             return 0;
+
+        case kScanFileButtonId:
+            RunPathScan(false);
+            return 0;
+
+        case kScanDirectoryButtonId:
+            RunPathScan(true);
+            return 0;
+
+        case kScanDrivesButtonId:
+        {
+            int scanned = 0;
+            int infected = 0;
+            wchar_t threat[128] = {};
+            wchar_t objectPath[MAX_PATH] = {};
+            wchar_t message[1024] = {};
+            int result = ScanFixedDrivesViaRPC(&scanned, &infected, threat, static_cast<int>(std::size(threat)),
+                                               objectPath, static_cast<int>(std::size(objectPath)),
+                                               message, static_cast<int>(std::size(message)));
+            ShowScanOutcome(result, scanned, infected, threat, objectPath, message);
+            return 0;
+        }
+
+        case kScheduleButtonId:
+        {
+            const std::wstring path = ReadEditText(g_scanPathEdit);
+            const std::wstring intervalText = ReadEditText(g_scheduleIntervalEdit);
+            const int interval = intervalText.empty() ? 60 : _wtoi(intervalText.c_str());
+            wchar_t message[512] = {};
+            ConfigureScheduledScanViaRPC(1, interval > 0 ? interval : 60, path.c_str(), message, static_cast<int>(std::size(message)));
+            SetWindowTextSafe(g_scanResultLabel, message);
+            return 0;
+        }
+
+        case kMonitorButtonId:
+        {
+            const std::wstring path = ReadEditText(g_scanPathEdit);
+            wchar_t message[512] = {};
+            ConfigureDirectoryMonitoringViaRPC(1, path.c_str(), message, static_cast<int>(std::size(message)));
+            SetWindowTextSafe(g_scanResultLabel, message);
+            return 0;
+        }
 
         default:
             break;
@@ -552,7 +685,7 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         600,
-        360,
+        500,
         nullptr,
         nullptr,
         instanceHandle,

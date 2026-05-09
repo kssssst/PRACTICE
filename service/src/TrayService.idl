@@ -23,6 +23,24 @@ interface ITrayService
         [string] wchar_t message[512];
     } LicenseInfo;
 
+    typedef struct AvDatabaseInfo
+    {
+        long loaded;
+        long recordCount;
+        [string] wchar_t releaseDate[64];
+        [string] wchar_t message[512];
+    } AvDatabaseInfo;
+
+    typedef struct ScanResult
+    {
+        long scannedFiles;
+        long infectedFiles;
+        long errorCode;
+        [string] wchar_t threatName[128];
+        [string] wchar_t objectPath[260];
+        [string] wchar_t message[1024];
+    } ScanResult;
+
     error_status_t StopService();
     error_status_t GetServiceStatus([out] long *status);
     error_status_t GetCurrentUser([out] AuthUserInfo *info);
@@ -33,4 +51,17 @@ interface ITrayService
     error_status_t GetLicenseInfo([out] LicenseInfo *info);
     error_status_t ActivateProduct([in, string] wchar_t *activationKey,
                                    [out] LicenseInfo *info);
+    error_status_t GetAvDatabaseInfo([out] AvDatabaseInfo *info);
+    error_status_t ScanFile([in, string] wchar_t *path,
+                            [out] ScanResult *result);
+    error_status_t ScanDirectory([in, string] wchar_t *path,
+                                 [out] ScanResult *result);
+    error_status_t ScanFixedDrives([out] ScanResult *result);
+    error_status_t ConfigureScheduledScan([in] long enabled,
+                                          [in] long intervalMinutes,
+                                          [in, string] wchar_t *path,
+                                          [out, string] wchar_t message[512]);
+    error_status_t ConfigureDirectoryMonitoring([in] long enabled,
+                                                [in, string] wchar_t *path,
+                                                [out, string] wchar_t message[512]);
 };
