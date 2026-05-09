@@ -343,6 +343,17 @@ void MergeScanResult(ScanResult* target, const ScanResult& item) {
 bool ScanBufferWithDatabase(const std::wstring& path, const std::vector<unsigned char>& data, ScanResult* result) {
     if (!result) return false;
 
+    EnterCriticalSection(&g_avLock);
+    const bool databaseLoaded = g_avDatabase.loaded;
+    LeaveCriticalSection(&g_avLock);
+    if (!databaseLoaded) {
+        bool hasLicense = false;
+        EnterCriticalSection(&g_stateLock);
+        hasLicense = !g_state.licenseTicketJson.empty() && !g_state.licenseBlocked;
+        LeaveCriticalSection(&g_stateLock);
+        if (hasLicense) LoadAvDatabase();
+    }
+
     AvDatabase database;
     std::vector<AhoNode> trie;
     EnterCriticalSection(&g_avLock);
@@ -907,6 +918,7 @@ bool CheckLicense() {
     const bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
     if (!ok) ClearLicenseLocked(ResponseErrorMessage(response, L"Активная лицензия не найдена"));
     LeaveCriticalSection(&g_stateLock);
+    if (ok) LoadAvDatabase();
     SetEvent(g_stateChangedEvent);
     return ok;
 }

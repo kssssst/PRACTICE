@@ -62,6 +62,15 @@ HWND g_monitorButton = nullptr;
 bool g_authenticated = false;
 bool g_hasLicense = false;
 bool g_licenseBlocked = false;
+HFONT g_uiFont = nullptr;
+
+void ApplyUiFont(HWND controlHandle)
+{
+    if (controlHandle != nullptr && g_uiFont != nullptr)
+    {
+        SendMessageW(controlHandle, WM_SETFONT, reinterpret_cast<WPARAM>(g_uiFont), TRUE);
+    }
+}
 
 DWORD GetParentProcessId(DWORD processId)
 {
@@ -274,44 +283,72 @@ void CreateMainControls(HWND windowHandle)
         return reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id));
     };
 
+    if (g_uiFont == nullptr)
+    {
+        g_uiFont = CreateFontW(
+            -16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    }
+
     g_statusLabel = CreateWindowW(L"STATIC", L"Проверка состояния...", WS_CHILD | WS_VISIBLE,
-                                  24, 24, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                  24, 24, 690, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_emailEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                   24, 64, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_passwordEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_PASSWORD,
                                      24, 100, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_loginButton = CreateWindowW(L"BUTTON", L"Войти", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                  300, 64, 120, 62, windowHandle, controlId(kLoginButtonId), g_instanceHandle, nullptr);
+                                  300, 64, 140, 62, windowHandle, controlId(kLoginButtonId), g_instanceHandle, nullptr);
     g_logoutButton = CreateWindowW(L"BUTTON", L"Выйти", WS_CHILD | BS_PUSHBUTTON,
-                                   300, 64, 120, 30, windowHandle, controlId(kLogoutButtonId), g_instanceHandle, nullptr);
+                                   410, 64, 140, 30, windowHandle, controlId(kLogoutButtonId), g_instanceHandle, nullptr);
     g_licenseLabel = CreateWindowW(L"STATIC", L"Лицензия: проверка...", WS_CHILD | WS_VISIBLE,
-                                   24, 150, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                   24, 150, 690, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_activationEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL,
                                        24, 190, 260, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_activateButton = CreateWindowW(L"BUTTON", L"Активировать", WS_CHILD | BS_PUSHBUTTON,
-                                     300, 190, 120, 26, windowHandle, controlId(kActivateButtonId), g_instanceHandle, nullptr);
+                                     300, 190, 160, 30, windowHandle, controlId(kActivateButtonId), g_instanceHandle, nullptr);
     g_refreshButton = CreateWindowW(L"BUTTON", L"Обновить", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                    430, 64, 120, 30, windowHandle, controlId(kRefreshButtonId), g_instanceHandle, nullptr);
+                                    570, 64, 140, 30, windowHandle, controlId(kRefreshButtonId), g_instanceHandle, nullptr);
     g_antivirusLabel = CreateWindowW(L"STATIC", L"Антивирус: заблокирован", WS_CHILD | WS_VISIBLE,
-                                     24, 240, 520, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                     24, 240, 690, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_databaseLabel = CreateWindowW(L"STATIC", L"Базы: проверка...", WS_CHILD | WS_VISIBLE,
-                                    24, 268, 540, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                    24, 268, 690, 24, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_scanPathEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                                     24, 306, 390, 26, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                     24, 306, 500, 28, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_scanFileButton = CreateWindowW(L"BUTTON", L"Сканировать файл", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                     430, 306, 130, 26, windowHandle, controlId(kScanFileButtonId), g_instanceHandle, nullptr);
+                                     540, 306, 174, 28, windowHandle, controlId(kScanFileButtonId), g_instanceHandle, nullptr);
     g_scanDirectoryButton = CreateWindowW(L"BUTTON", L"Сканировать папку", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                          24, 342, 150, 28, windowHandle, controlId(kScanDirectoryButtonId), g_instanceHandle, nullptr);
+                                          24, 346, 170, 30, windowHandle, controlId(kScanDirectoryButtonId), g_instanceHandle, nullptr);
     g_scanDrivesButton = CreateWindowW(L"BUTTON", L"Все диски", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                       184, 342, 110, 28, windowHandle, controlId(kScanDrivesButtonId), g_instanceHandle, nullptr);
+                                       206, 346, 120, 30, windowHandle, controlId(kScanDrivesButtonId), g_instanceHandle, nullptr);
     g_scheduleIntervalEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"60", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER,
-                                             304, 342, 54, 28, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                             338, 346, 60, 30, windowHandle, nullptr, g_instanceHandle, nullptr);
     g_scheduleButton = CreateWindowW(L"BUTTON", L"Расписание", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                     366, 342, 96, 28, windowHandle, controlId(kScheduleButtonId), g_instanceHandle, nullptr);
+                                     410, 346, 130, 30, windowHandle, controlId(kScheduleButtonId), g_instanceHandle, nullptr);
     g_monitorButton = CreateWindowW(L"BUTTON", L"Мониторинг", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                    470, 342, 90, 28, windowHandle, controlId(kMonitorButtonId), g_instanceHandle, nullptr);
+                                    552, 346, 162, 30, windowHandle, controlId(kMonitorButtonId), g_instanceHandle, nullptr);
     g_scanResultLabel = CreateWindowW(L"STATIC", L"Сканирование: готово", WS_CHILD | WS_VISIBLE,
-                                      24, 382, 540, 44, windowHandle, nullptr, g_instanceHandle, nullptr);
+                                      24, 390, 690, 52, windowHandle, nullptr, g_instanceHandle, nullptr);
+
+    ApplyUiFont(g_statusLabel);
+    ApplyUiFont(g_emailEdit);
+    ApplyUiFont(g_passwordEdit);
+    ApplyUiFont(g_loginButton);
+    ApplyUiFont(g_logoutButton);
+    ApplyUiFont(g_licenseLabel);
+    ApplyUiFont(g_activationEdit);
+    ApplyUiFont(g_activateButton);
+    ApplyUiFont(g_refreshButton);
+    ApplyUiFont(g_antivirusLabel);
+    ApplyUiFont(g_databaseLabel);
+    ApplyUiFont(g_scanPathEdit);
+    ApplyUiFont(g_scanFileButton);
+    ApplyUiFont(g_scanDirectoryButton);
+    ApplyUiFont(g_scanDrivesButton);
+    ApplyUiFont(g_scheduleIntervalEdit);
+    ApplyUiFont(g_scheduleButton);
+    ApplyUiFont(g_monitorButton);
+    ApplyUiFont(g_scanResultLabel);
 
     SendMessageW(g_emailEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Email"));
     SendMessageW(g_passwordEdit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Пароль"));
@@ -322,7 +359,6 @@ void CreateMainControls(HWND windowHandle)
 
 void StopServiceAndExit()
 {
-    RequestServiceStopAndWait();
     RemoveTrayIcon();
     DestroyWindow(g_mainWindow);
 }
@@ -637,22 +673,15 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
     const int startResult = CheckAndStartService();
     if (startResult != 0)
     {
-        if (startResult == -6 && StartServiceElevatedAndWait())
+        if (!(startResult == -6 && StartServiceElevatedAndWait()))
         {
-            return 0;
+            MessageBoxW(
+                nullptr,
+                L"Не удалось запустить службу TrayAppService или дождаться состояния Running.",
+                L"Ошибка",
+                MB_OK | MB_ICONERROR);
+            return 1;
         }
-
-        MessageBoxW(
-            nullptr,
-            L"Не удалось запустить службу TrayAppService или дождаться состояния Running.",
-            L"Ошибка",
-            MB_OK | MB_ICONERROR);
-        return 1;
-    }
-
-    if (!IsServiceParentProcess())
-    {
-        return 0;
     }
 
     g_startHidden = ShouldStartHidden(commandLine);
@@ -684,8 +713,8 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        600,
-        500,
+        760,
+        520,
         nullptr,
         nullptr,
         instanceHandle,
@@ -712,6 +741,11 @@ int WINAPI wWinMain(HINSTANCE instanceHandle, HINSTANCE, LPWSTR commandLine, int
     {
         ReleaseMutex(g_singleInstanceMutex);
         CloseHandle(g_singleInstanceMutex);
+    }
+    if (g_uiFont != nullptr)
+    {
+        DeleteObject(g_uiFont);
+        g_uiFont = nullptr;
     }
 
     CleanupRPCClient();

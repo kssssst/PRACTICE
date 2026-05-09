@@ -99,5 +99,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: TrayAppInstaller-ARM64
+
+
         path: TrayAppInstaller/src/bin/${{ env.BUILD_CONFIGURATION }}/TrayAppSetup.msi
         retention-days: 90
