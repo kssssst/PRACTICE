@@ -309,8 +309,7 @@ std::wstring GetAvDbRoot() {
     std::wstring root = programData;
     if (!root.empty() && root.back() != L'\\') root += L"\\";
     root += L"ZIOVPO Security\\avdb";
-    CreateDirectoryW((std::wstring(programData) + L"\\ZIOVPO Security").c_str(), nullptr);
-    CreateDirectoryW(root.c_str(), nullptr);
+    SHCreateDirectoryExW(nullptr, root.c_str(), nullptr);
     return root;
 }
 
@@ -320,10 +319,13 @@ std::wstring BackupManifestPath(const std::wstring& root) { return root + L"\\ma
 std::wstring BackupDataPath(const std::wstring& root) { return root + L"\\data.bak"; }
 
 bool WriteFileBytes(const std::wstring& path, const std::vector<unsigned char>& bytes) {
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    if (!stream) return false;
-    if (!bytes.empty()) stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return stream.good();
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const BOOL ok = bytes.empty() ||
+        WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr);
+    CloseHandle(file);
+    return ok && written == bytes.size();
 }
 
 std::vector<AvRecord> DefaultAvRecords() {
