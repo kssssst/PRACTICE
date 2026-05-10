@@ -8,6 +8,7 @@
 #include <rpc.h>
 #include <rpcndr.h>
 #include <winhttp.h>
+#include <wincrypt.h>
 #include <iphlpapi.h>
 #include <shlobj.h>
 #include <ws2tcpip.h>
