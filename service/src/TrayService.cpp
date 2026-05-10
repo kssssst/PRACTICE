@@ -422,6 +422,14 @@ bool BackupAvDatabase() {
            GetFileAttributesW(BackupDataPath(root).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
+void EnsureAvDatabaseBackupExists() {
+    const std::wstring root = GetAvDbRoot();
+    if (GetFileAttributesW(BackupManifestPath(root).c_str()) == INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW(BackupDataPath(root).c_str()) == INVALID_FILE_ATTRIBUTES) {
+        BackupAvDatabase();
+    }
+}
+
 bool RestoreAvDatabaseBackup() {
     const std::wstring root = GetAvDbRoot();
     if (GetFileAttributesW(BackupManifestPath(root).c_str()) == INVALID_FILE_ATTRIBUTES ||
@@ -626,6 +634,7 @@ bool LoadAvDatabase() {
     g_avDatabase = database;
     BuildAhoTrieLocked();
     LeaveCriticalSection(&g_avLock);
+    EnsureAvDatabaseBackupExists();
     return true;
 }
 
