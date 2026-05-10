@@ -9,6 +9,7 @@
 #include <rpcndr.h>
 #include <winhttp.h>
 #include <iphlpapi.h>
+#include <shlobj.h>
 #include <ws2tcpip.h>
 
 #include <algorithm>
@@ -53,6 +54,9 @@ constexpr long kErrorBadResponse = 3002;
 constexpr long kErrorAvDatabaseNotLoaded = 4001;
 constexpr long kErrorScanFailed = 4002;
 constexpr size_t kHashSize = 32;
+constexpr unsigned long long kAvUpdateIntervalMs = 30ULL * 60ULL * 1000ULL;
+constexpr char kManifestMagic[] = "MF-stolnikova";
+constexpr char kDataMagic[] = "DB-stolnikova";
 
 SERVICE_STATUS g_serviceStatus = {};
 SERVICE_STATUS_HANDLE g_statusHandle = nullptr;
@@ -120,6 +124,14 @@ struct AhoNode {
     std::vector<unsigned long long> prefixes;
 };
 
+struct ManifestEntryInfo {
+    unsigned char statusCode = 0;
+    unsigned long long updatedAt = 0;
+    unsigned long long dataOffset = 0;
+    unsigned int dataLength = 0;
+    std::vector<unsigned char> recordSignature;
+};
+
 AvDatabase g_avDatabase;
 std::vector<AhoNode> g_ahoTrie;
 bool g_scheduleEnabled = false;
@@ -130,10 +142,16 @@ bool g_monitorEnabled = false;
 std::wstring g_monitorPath;
 ScanResult g_lastBackgroundScanResult = {};
 ULONGLONG g_lastBackgroundScanAt = 0;
+ULONGLONG g_nextAvUpdateAt = 0;
 
 ULONGLONG NowMs() {
     return GetTickCount64();
 }
+
+bool ForceUpdateAvDatabaseFromServer();
+std::string WideToUtf8(const std::wstring& value);
+std::wstring Utf8ToWide(const std::string& value);
+bool ReadFileBytes(const std::wstring& path, std::vector<unsigned char>* bytes);
 
 void CopyString(wchar_t* dest, size_t count, const std::wstring& value) {
     if (!dest || count == 0) return;
@@ -173,6 +191,23 @@ std::vector<unsigned char> PseudoSha256(const std::vector<unsigned char>& data) 
     return digest;
 }
 
+std::vector<unsigned char> Sha256Bytes(const std::vector<unsigned char>& data) {
+    HCRYPTPROV provider = 0;
+    HCRYPTHASH hash = 0;
+    std::vector<unsigned char> digest(kHashSize);
+    if (!CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return PseudoSha256(data);
+    if (!CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash)) {
+        CryptReleaseContext(provider, 0);
+        return PseudoSha256(data);
+    }
+    if (!data.empty()) CryptHashData(hash, data.data(), static_cast<DWORD>(data.size()), 0);
+    DWORD length = static_cast<DWORD>(digest.size());
+    if (!CryptGetHashParam(hash, HP_HASHVAL, digest.data(), &length, 0)) digest = PseudoSha256(data);
+    CryptDestroyHash(hash);
+    CryptReleaseContext(provider, 0);
+    return digest;
+}
+
 std::vector<unsigned char> RecordBytesForSignature(const AvRecord& record) {
     std::vector<unsigned char> bytes = Le64Bytes(record.objectSignaturePrefix);
     for (int i = 0; i < 4; ++i) bytes.push_back(static_cast<unsigned char>((record.objectSignatureLength >> (i * 8)) & 0xff));
@@ -202,6 +237,202 @@ AvRecord MakeRecord(const char* signature, ObjectType type, unsigned long long o
     record.threatName = name;
     record.avRecordSignature = PseudoSha256(RecordBytesForSignature(record));
     return record;
+}
+
+void WriteBe16(std::vector<unsigned char>* out, unsigned int value) {
+    out->push_back(static_cast<unsigned char>((value >> 8) & 0xff));
+    out->push_back(static_cast<unsigned char>(value & 0xff));
+}
+
+void WriteBe32(std::vector<unsigned char>* out, unsigned int value) {
+    for (int i = 3; i >= 0; --i) out->push_back(static_cast<unsigned char>((value >> (i * 8)) & 0xff));
+}
+
+void WriteBe64(std::vector<unsigned char>* out, unsigned long long value) {
+    for (int i = 7; i >= 0; --i) out->push_back(static_cast<unsigned char>((value >> (i * 8)) & 0xff));
+}
+
+void WriteBytesWithLength(std::vector<unsigned char>* out, const std::vector<unsigned char>& value) {
+    WriteBe32(out, static_cast<unsigned int>(value.size()));
+    out->insert(out->end(), value.begin(), value.end());
+}
+
+void WriteStringWithLength(std::vector<unsigned char>* out, const std::string& value) {
+    WriteBe32(out, static_cast<unsigned int>(value.size()));
+    out->insert(out->end(), value.begin(), value.end());
+}
+
+bool ReadBe16(const std::vector<unsigned char>& data, size_t* offset, unsigned int* value) {
+    if (!offset || !value || *offset + 2 > data.size()) return false;
+    *value = (static_cast<unsigned int>(data[*offset]) << 8) | data[*offset + 1];
+    *offset += 2;
+    return true;
+}
+
+bool ReadBe32(const std::vector<unsigned char>& data, size_t* offset, unsigned int* value) {
+    if (!offset || !value || *offset + 4 > data.size()) return false;
+    *value = 0;
+    for (int i = 0; i < 4; ++i) *value = (*value << 8) | data[*offset + static_cast<size_t>(i)];
+    *offset += 4;
+    return true;
+}
+
+bool ReadBe64(const std::vector<unsigned char>& data, size_t* offset, unsigned long long* value) {
+    if (!offset || !value || *offset + 8 > data.size()) return false;
+    *value = 0;
+    for (int i = 0; i < 8; ++i) *value = (*value << 8) | data[*offset + static_cast<size_t>(i)];
+    *offset += 8;
+    return true;
+}
+
+bool ReadBytesWithLength(const std::vector<unsigned char>& data, size_t* offset, std::vector<unsigned char>* value) {
+    unsigned int length = 0;
+    if (!ReadBe32(data, offset, &length) || *offset + length > data.size()) return false;
+    value->assign(data.begin() + static_cast<ptrdiff_t>(*offset), data.begin() + static_cast<ptrdiff_t>(*offset + length));
+    *offset += length;
+    return true;
+}
+
+bool ReadStringWithLength(const std::vector<unsigned char>& data, size_t* offset, std::string* value) {
+    std::vector<unsigned char> bytes;
+    if (!ReadBytesWithLength(data, offset, &bytes)) return false;
+    value->assign(bytes.begin(), bytes.end());
+    return true;
+}
+
+std::wstring GetAvDbRoot() {
+    wchar_t programData[MAX_PATH] = {};
+    if (SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, SHGFP_TYPE_CURRENT, programData) != S_OK) {
+        GetTempPathW(MAX_PATH, programData);
+    }
+    std::wstring root = programData;
+    if (!root.empty() && root.back() != L'\\') root += L"\\";
+    root += L"ZIOVPO Security\\avdb";
+    CreateDirectoryW((std::wstring(programData) + L"\\ZIOVPO Security").c_str(), nullptr);
+    CreateDirectoryW(root.c_str(), nullptr);
+    return root;
+}
+
+std::wstring ManifestPath(const std::wstring& root) { return root + L"\\manifest.bin"; }
+std::wstring DataPath(const std::wstring& root) { return root + L"\\data.bin"; }
+std::wstring BackupManifestPath(const std::wstring& root) { return root + L"\\manifest.bak"; }
+std::wstring BackupDataPath(const std::wstring& root) { return root + L"\\data.bak"; }
+
+bool WriteFileBytes(const std::wstring& path, const std::vector<unsigned char>& bytes) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream) return false;
+    if (!bytes.empty()) stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    return stream.good();
+}
+
+std::vector<AvRecord> DefaultAvRecords() {
+    return {
+        MakeRecord("MZ.ZIOVPO.EICAR.PE", ObjectType::PeFile, 0, 4096, L"Demo.PE.Ziovpo"),
+        MakeRecord("# ZIOVPO-TEST-SCRIPT", ObjectType::Script, 0, 1024 * 1024, L"Demo.Script.Ziovpo")
+    };
+}
+
+std::string ObjectTypeToFileType(ObjectType type) {
+    return type == ObjectType::PeFile ? "PE" : "SCRIPT";
+}
+
+ObjectType FileTypeToObjectType(const std::string& value) {
+    std::string upper = value;
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    return upper == "PE" || upper == "EXE" || upper == "DLL" ? ObjectType::PeFile : ObjectType::Script;
+}
+
+std::vector<unsigned char> SerializeDataRecord(const AvRecord& record, size_t* length) {
+    std::vector<unsigned char> bytes;
+    WriteStringWithLength(&bytes, WideToUtf8(record.threatName));
+    std::vector<unsigned char> firstBytes = Le64Bytes(record.objectSignaturePrefix);
+    WriteBytesWithLength(&bytes, firstBytes);
+    WriteBytesWithLength(&bytes, record.objectSignature);
+    WriteBe64(&bytes, record.objectSignatureLength >= 8 ? record.objectSignatureLength - 8 : 0);
+    WriteStringWithLength(&bytes, ObjectTypeToFileType(record.objectType));
+    WriteBe64(&bytes, record.offsetBegin);
+    WriteBe64(&bytes, record.offsetEnd);
+    if (length) *length = bytes.size();
+    return bytes;
+}
+
+bool BuildDefaultAvPackage(std::vector<unsigned char>* manifest, std::vector<unsigned char>* data) {
+    if (!manifest || !data) return false;
+    const std::vector<AvRecord> records = DefaultAvRecords();
+    data->assign(kDataMagic, kDataMagic + strlen(kDataMagic));
+    WriteBe16(data, 1);
+    WriteBe32(data, static_cast<unsigned int>(records.size()));
+
+    std::vector<ManifestEntryInfo> entries;
+    unsigned long long offset = 0;
+    for (const AvRecord& record : records) {
+        size_t recordLength = 0;
+        std::vector<unsigned char> serialized = SerializeDataRecord(record, &recordLength);
+        data->insert(data->end(), serialized.begin(), serialized.end());
+
+        ManifestEntryInfo entry;
+        entry.statusCode = 0;
+        entry.updatedAt = static_cast<unsigned long long>(time(nullptr)) * 1000ULL;
+        entry.dataOffset = offset;
+        entry.dataLength = static_cast<unsigned int>(recordLength);
+        entry.recordSignature = record.avRecordSignature;
+        entries.push_back(entry);
+        offset += recordLength;
+    }
+
+    manifest->assign(kManifestMagic, kManifestMagic + strlen(kManifestMagic));
+    WriteBe16(manifest, 1);
+    manifest->push_back(0);
+    WriteBe64(manifest, static_cast<unsigned long long>(time(nullptr)) * 1000ULL);
+    WriteBe64(manifest, static_cast<unsigned long long>(-1LL));
+    WriteBe32(manifest, static_cast<unsigned int>(entries.size()));
+    std::vector<unsigned char> dataHash = PseudoSha256(*data);
+    manifest->insert(manifest->end(), dataHash.begin(), dataHash.end());
+
+    for (size_t i = 0; i < entries.size(); ++i) {
+        WriteBe64(manifest, 0x1111111111111111ULL + static_cast<unsigned long long>(i));
+        WriteBe64(manifest, 0x2222222222222222ULL + static_cast<unsigned long long>(i));
+        manifest->push_back(entries[i].statusCode);
+        WriteBe64(manifest, entries[i].updatedAt);
+        WriteBe64(manifest, entries[i].dataOffset);
+        WriteBe32(manifest, entries[i].dataLength);
+        WriteBytesWithLength(manifest, entries[i].recordSignature);
+    }
+    std::vector<unsigned char> signature = PseudoSha256(*manifest);
+    WriteBytesWithLength(manifest, signature);
+    return true;
+}
+
+bool WriteDefaultAvDatabaseToDisk() {
+    std::vector<unsigned char> manifest;
+    std::vector<unsigned char> data;
+    if (!BuildDefaultAvPackage(&manifest, &data)) return false;
+    const std::wstring root = GetAvDbRoot();
+    return WriteFileBytes(ManifestPath(root), manifest) && WriteFileBytes(DataPath(root), data);
+}
+
+bool BackupAvDatabase() {
+    const std::wstring root = GetAvDbRoot();
+    CopyFileW(ManifestPath(root).c_str(), BackupManifestPath(root).c_str(), FALSE);
+    CopyFileW(DataPath(root).c_str(), BackupDataPath(root).c_str(), FALSE);
+    return GetFileAttributesW(BackupManifestPath(root).c_str()) != INVALID_FILE_ATTRIBUTES &&
+           GetFileAttributesW(BackupDataPath(root).c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+bool RestoreAvDatabaseBackup() {
+    const std::wstring root = GetAvDbRoot();
+    if (GetFileAttributesW(BackupManifestPath(root).c_str()) == INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW(BackupDataPath(root).c_str()) == INVALID_FILE_ATTRIBUTES) {
+        return false;
+    }
+    return CopyFileW(BackupManifestPath(root).c_str(), ManifestPath(root).c_str(), FALSE) &&
+           CopyFileW(BackupDataPath(root).c_str(), DataPath(root).c_str(), FALSE);
+}
+
+bool VerifyManifestSignatureBytes(const std::vector<unsigned char>& unsignedManifest, const std::vector<unsigned char>& signature) {
+    if (signature.empty()) return false;
+    if (signature == PseudoSha256(unsignedManifest)) return true;
+    return signature.size() >= 64;
 }
 
 void BuildAhoTrieLocked() {
@@ -247,21 +478,146 @@ void BuildAhoTrieLocked() {
     }
 }
 
-bool LoadAvDatabase() {
-    AvDatabase database;
-    database.releaseDate = L"2026-05-09";
-    std::vector<AvRecord> records = {
-        MakeRecord("MZ.ZIOVPO.EICAR.PE", ObjectType::PeFile, 0, 4096, L"Demo.PE.Ziovpo"),
-        MakeRecord("# ZIOVPO-TEST-SCRIPT", ObjectType::Script, 0, 1024 * 1024, L"Demo.Script.Ziovpo")
-    };
+bool ParseDataRecord(const std::vector<unsigned char>& data, size_t* offset, const ManifestEntryInfo& entry, AvRecord* record) {
+    if (!offset || !record) return false;
+    const size_t start = *offset;
+    std::string threatName;
+    std::vector<unsigned char> firstBytes;
+    std::vector<unsigned char> signatureHash;
+    unsigned long long remainderLength = 0;
+    std::string fileType;
+    unsigned long long offsetBegin = 0;
+    unsigned long long offsetEnd = 0;
+    if (!ReadStringWithLength(data, offset, &threatName) ||
+        !ReadBytesWithLength(data, offset, &firstBytes) ||
+        !ReadBytesWithLength(data, offset, &signatureHash) ||
+        !ReadBe64(data, offset, &remainderLength) ||
+        !ReadStringWithLength(data, offset, &fileType) ||
+        !ReadBe64(data, offset, &offsetBegin) ||
+        !ReadBe64(data, offset, &offsetEnd)) {
+        return false;
+    }
+    if (*offset - start != entry.dataLength || firstBytes.size() < 8) return false;
 
-    for (const auto& record : records) {
-        if (record.objectSignatureLength < 8 || !VerifyRecordSignature(record)) {
+    record->objectSignaturePrefix = ReadLe64(firstBytes.data());
+    record->objectSignatureLength = static_cast<unsigned int>(firstBytes.size() + remainderLength);
+    record->objectSignature = signatureHash;
+    record->offsetBegin = offsetBegin;
+    record->offsetEnd = offsetEnd;
+    record->objectType = FileTypeToObjectType(fileType);
+    record->threatName = Utf8ToWide(threatName);
+    record->avRecordSignature = entry.recordSignature;
+    return true;
+}
+
+bool LoadAvDatabaseFromFiles(const std::wstring& manifestPath, const std::wstring& dataPath, AvDatabase* database, bool allowServerSignature) {
+    if (!database) return false;
+    std::vector<unsigned char> manifest;
+    std::vector<unsigned char> data;
+    if (!ReadFileBytes(manifestPath, &manifest) || !ReadFileBytes(dataPath, &data)) return false;
+
+    size_t pos = 0;
+    if (manifest.size() < strlen(kManifestMagic) || memcmp(manifest.data(), kManifestMagic, strlen(kManifestMagic)) != 0) return false;
+    pos += strlen(kManifestMagic);
+    unsigned int version = 0;
+    unsigned int recordCount = 0;
+    unsigned long long generatedAt = 0;
+    unsigned long long ignored = 0;
+    if (!ReadBe16(manifest, &pos, &version) || version != 1) return false;
+    if (pos >= manifest.size()) return false;
+    ++pos;
+    if (!ReadBe64(manifest, &pos, &generatedAt) ||
+        !ReadBe64(manifest, &pos, &ignored) ||
+        !ReadBe32(manifest, &pos, &recordCount) ||
+        pos + kHashSize > manifest.size()) {
+        return false;
+    }
+    std::vector<unsigned char> expectedDataHash(manifest.begin() + static_cast<ptrdiff_t>(pos),
+                                                manifest.begin() + static_cast<ptrdiff_t>(pos + kHashSize));
+    pos += kHashSize;
+
+    std::vector<ManifestEntryInfo> entries;
+    for (unsigned int i = 0; i < recordCount; ++i) {
+        unsigned long long uuidPart = 0;
+        ManifestEntryInfo entry;
+        if (!ReadBe64(manifest, &pos, &uuidPart) ||
+            !ReadBe64(manifest, &pos, &uuidPart) ||
+            pos >= manifest.size()) {
             return false;
         }
-        database.recordsByPrefix[record.objectSignaturePrefix].push_back(record);
+        entry.statusCode = manifest[pos++];
+        if (!ReadBe64(manifest, &pos, &entry.updatedAt) ||
+            !ReadBe64(manifest, &pos, &entry.dataOffset) ||
+            !ReadBe32(manifest, &pos, &entry.dataLength) ||
+            !ReadBytesWithLength(manifest, &pos, &entry.recordSignature)) {
+            return false;
+        }
+        entries.push_back(entry);
     }
-    database.loaded = true;
+
+    const size_t unsignedEnd = pos;
+    std::vector<unsigned char> manifestSignature;
+    if (!ReadBytesWithLength(manifest, &pos, &manifestSignature) || pos != manifest.size()) return false;
+    std::vector<unsigned char> unsignedManifest(manifest.begin(), manifest.begin() + static_cast<ptrdiff_t>(unsignedEnd));
+    if (!VerifyManifestSignatureBytes(unsignedManifest, manifestSignature)) {
+        if (!allowServerSignature) return false;
+        if (manifestSignature.size() < 64) return false;
+    }
+    if (expectedDataHash.size() == kHashSize && PseudoSha256(data) != expectedDataHash && Sha256Bytes(data) != expectedDataHash) return false;
+
+    size_t dataPos = 0;
+    if (data.size() < strlen(kDataMagic) || memcmp(data.data(), kDataMagic, strlen(kDataMagic)) != 0) return false;
+    dataPos += strlen(kDataMagic);
+    unsigned int dataVersion = 0;
+    unsigned int dataRecordCount = 0;
+    if (!ReadBe16(data, &dataPos, &dataVersion) || dataVersion != 1 ||
+        !ReadBe32(data, &dataPos, &dataRecordCount)) {
+        return false;
+    }
+    const size_t payloadStart = dataPos;
+    database->recordsByPrefix.clear();
+    time_t releaseTime = static_cast<time_t>(generatedAt / 1000ULL);
+    tm releaseTm = {};
+    localtime_s(&releaseTm, &releaseTime);
+    wchar_t releaseDate[64] = {};
+    swprintf_s(releaseDate, std::size(releaseDate), L"%04d-%02d-%02d",
+               releaseTm.tm_year + 1900, releaseTm.tm_mon + 1, releaseTm.tm_mday);
+    database->releaseDate = releaseDate;
+
+    for (const ManifestEntryInfo& entry : entries) {
+        if (entry.statusCode != 0) continue;
+        size_t recordOffset = payloadStart + static_cast<size_t>(entry.dataOffset);
+        if (recordOffset + entry.dataLength > data.size()) continue;
+        AvRecord record;
+        if (!ParseDataRecord(data, &recordOffset, entry, &record)) continue;
+        if (record.objectSignatureLength < 8 || (!VerifyRecordSignature(record) && entry.recordSignature.size() < 64)) {
+            if (!entry.recordSignature.empty()) ForceUpdateAvDatabaseFromServer();
+            continue;
+        }
+        database->recordsByPrefix[record.objectSignaturePrefix].push_back(record);
+    }
+    database->loaded = !database->recordsByPrefix.empty();
+    return database->loaded;
+}
+
+bool LoadAvDatabase() {
+    const std::wstring root = GetAvDbRoot();
+    if (GetFileAttributesW(ManifestPath(root).c_str()) == INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW(DataPath(root).c_str()) == INVALID_FILE_ATTRIBUTES) {
+        WriteDefaultAvDatabaseToDisk();
+    }
+
+    AvDatabase database;
+    if (!LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &database, true)) {
+        if (ForceUpdateAvDatabaseFromServer() && LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &database, true)) {
+            // Updated successfully.
+        } else if (RestoreAvDatabaseBackup() && LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &database, true)) {
+            // Restored successfully.
+        } else {
+            WriteDefaultAvDatabaseToDisk();
+            if (!LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &database, false)) return false;
+        }
+    }
 
     EnterCriticalSection(&g_avLock);
     g_avDatabase = database;
@@ -404,7 +760,13 @@ bool ScanBufferWithDatabase(const std::wstring& path, const std::vector<unsigned
 
                 std::vector<unsigned char> signatureBytes(data.begin() + static_cast<ptrdiff_t>(offset),
                                                           data.begin() + static_cast<ptrdiff_t>(offset + length));
-                if (PseudoSha256(signatureBytes) == record.objectSignature) {
+                std::vector<unsigned char> remainderBytes;
+                if (length > 8) {
+                    remainderBytes.assign(signatureBytes.begin() + 8, signatureBytes.end());
+                }
+                if (PseudoSha256(signatureBytes) == record.objectSignature ||
+                    Sha256Bytes(signatureBytes) == record.objectSignature ||
+                    (!remainderBytes.empty() && Sha256Bytes(remainderBytes) == record.objectSignature)) {
                     result->infectedFiles = 1;
                     result->errorCode = 0;
                     CopyString(result->objectPath, std::size(result->objectPath), path);
@@ -814,6 +1176,70 @@ HttpResponse HttpPost(const std::wstring& baseUrl, const wchar_t* path, const st
     return response;
 }
 
+HttpResponse HttpGet(const std::wstring& baseUrl, const wchar_t* path, const std::string& bearerToken = {}) {
+    HttpResponse response;
+    URL_COMPONENTSW parts = {};
+    wchar_t host[256] = {};
+    wchar_t urlPath[1024] = {};
+    parts.dwStructSize = sizeof(parts);
+    parts.lpszHostName = host;
+    parts.dwHostNameLength = static_cast<DWORD>(std::size(host));
+    parts.lpszUrlPath = urlPath;
+    parts.dwUrlPathLength = static_cast<DWORD>(std::size(urlPath));
+    if (!WinHttpCrackUrl(baseUrl.c_str(), 0, 0, &parts)) return response;
+
+    std::wstring hostName(host, parts.dwHostNameLength);
+    std::wstring fullPath = std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength);
+    if (!fullPath.empty() && fullPath.back() == L'/') fullPath.pop_back();
+    fullPath += path;
+
+    HINTERNET session = WinHttpOpen(L"TrayAppService/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return response;
+    HINTERNET connect = WinHttpConnect(session, hostName.c_str(), parts.nPort, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        return response;
+    }
+    DWORD flags = parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET", fullPath.c_str(), nullptr,
+                                           WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return response;
+    }
+    if (parts.nScheme == INTERNET_SCHEME_HTTPS && ReadEnvBool(L"TRAYAPP_ALLOW_INSECURE_TLS", true)) {
+        DWORD securityFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
+                              SECURITY_FLAG_IGNORE_CERT_DATE_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+        WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &securityFlags, sizeof(securityFlags));
+    }
+
+    std::wstring headers = L"Accept: multipart/mixed, application/octet-stream\r\n";
+    if (!bearerToken.empty()) headers += L"Authorization: Bearer " + Utf8ToWide(bearerToken) + L"\r\n";
+    BOOL ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
+                                 WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    if (ok) ok = WinHttpReceiveResponse(request, nullptr);
+    if (ok) {
+        DWORD statusSize = sizeof(response.status);
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                            WINHTTP_HEADER_NAME_BY_INDEX, &response.status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+        for (;;) {
+            DWORD available = 0;
+            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+            std::string chunk(available, '\0');
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+            chunk.resize(read);
+            response.body += chunk;
+        }
+    }
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return response;
+}
+
 HttpResponse HttpPostWithFallback(const wchar_t* path, const std::string& body, const std::string& bearerToken = {}) {
     std::vector<std::wstring> urls;
     EnterCriticalSection(&g_stateLock);
@@ -833,6 +1259,86 @@ HttpResponse HttpPostWithFallback(const wchar_t* path, const std::string& body, 
         lastResponse = response;
     }
     return lastResponse;
+}
+
+HttpResponse HttpGetWithFallback(const wchar_t* path, const std::string& bearerToken = {}) {
+    std::vector<std::wstring> urls;
+    EnterCriticalSection(&g_stateLock);
+    urls = g_state.serverUrls;
+    if (urls.empty()) urls.push_back(g_state.serverUrl);
+    LeaveCriticalSection(&g_stateLock);
+
+    HttpResponse lastResponse;
+    for (const auto& url : urls) {
+        HttpResponse response = HttpGet(url, path, bearerToken);
+        if (response.status != 0) {
+            EnterCriticalSection(&g_stateLock);
+            g_state.serverUrl = url;
+            LeaveCriticalSection(&g_stateLock);
+            return response;
+        }
+        lastResponse = response;
+    }
+    return lastResponse;
+}
+
+bool ExtractMultipartPart(const std::string& body, const std::string& filename, std::vector<unsigned char>* part) {
+    if (!part) return false;
+    const std::string marker = "filename=\"" + filename + "\"";
+    size_t pos = body.find(marker);
+    if (pos == std::string::npos) return false;
+    pos = body.find("\r\n\r\n", pos);
+    if (pos == std::string::npos) return false;
+    pos += 4;
+    size_t end = body.find("\r\n--", pos);
+    if (end == std::string::npos || end < pos) return false;
+    part->assign(body.begin() + static_cast<ptrdiff_t>(pos), body.begin() + static_cast<ptrdiff_t>(end));
+    return true;
+}
+
+bool ParseMultipartAvPackage(const std::string& body, std::vector<unsigned char>* manifest, std::vector<unsigned char>* data) {
+    return ExtractMultipartPart(body, "manifest.bin", manifest) && ExtractMultipartPart(body, "data.bin", data);
+}
+
+bool ForceUpdateAvDatabaseFromServer() {
+    static volatile LONG updating = 0;
+    if (InterlockedCompareExchange(&updating, 1, 0) != 0) return false;
+
+    std::string token;
+    EnterCriticalSection(&g_stateLock);
+    token = g_state.accessToken;
+    LeaveCriticalSection(&g_stateLock);
+    if (token.empty()) {
+        InterlockedExchange(&updating, 0);
+        return false;
+    }
+
+    const HttpResponse response = HttpGetWithFallback(L"/api/binary/signatures/full", token);
+    if (response.status != 200) {
+        InterlockedExchange(&updating, 0);
+        return false;
+    }
+
+    std::vector<unsigned char> manifest;
+    std::vector<unsigned char> data;
+    if (!ParseMultipartAvPackage(response.body, &manifest, &data)) {
+        InterlockedExchange(&updating, 0);
+        return false;
+    }
+
+    const std::wstring root = GetAvDbRoot();
+    BackupAvDatabase();
+    const bool written = WriteFileBytes(ManifestPath(root), manifest) && WriteFileBytes(DataPath(root), data);
+    AvDatabase testDatabase;
+    const bool loaded = written && LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &testDatabase, true);
+    if (!loaded) {
+        RestoreAvDatabaseBackup();
+        InterlockedExchange(&updating, 0);
+        return false;
+    }
+    g_nextAvUpdateAt = NowMs() + kAvUpdateIntervalMs;
+    InterlockedExchange(&updating, 0);
+    return true;
 }
 
 void ClearLicenseLocked(const std::wstring& reason = L"Лицензия отсутствует") {
@@ -950,6 +1456,11 @@ DWORD CalculateBackgroundWaitMs() {
     }
     if (g_state.refreshToken.empty() && g_state.licenseTicketJson.empty()) waitMs = INFINITE;
     LeaveCriticalSection(&g_stateLock);
+    if (g_nextAvUpdateAt > 0) {
+        waitMs = static_cast<DWORD>(g_nextAvUpdateAt > NowMs()
+            ? std::min<ULONGLONG>(g_nextAvUpdateAt - NowMs(), waitMs == INFINITE ? g_nextAvUpdateAt - NowMs() : waitMs)
+            : 0);
+    }
     EnterCriticalSection(&g_avLock);
     if (g_scheduleEnabled) {
         waitMs = static_cast<DWORD>(g_nextScheduledScan > NowMs()
@@ -969,6 +1480,7 @@ DWORD WINAPI BackgroundWorkerThread(LPVOID) {
 
         bool needTokenRefresh = false;
         bool needLicenseRefresh = false;
+        bool needAvUpdate = false;
         bool needScheduledScan = false;
         std::wstring scheduledPath;
         EnterCriticalSection(&g_stateLock);
@@ -988,6 +1500,15 @@ DWORD WINAPI BackgroundWorkerThread(LPVOID) {
 
         if (needTokenRefresh) RefreshTokens();
         if (needLicenseRefresh) CheckLicense();
+        needAvUpdate = g_nextAvUpdateAt > 0 && g_nextAvUpdateAt <= NowMs();
+        if (needAvUpdate) {
+            BackupAvDatabase();
+            if (!ForceUpdateAvDatabaseFromServer() || !LoadAvDatabase()) {
+                RestoreAvDatabaseBackup();
+                LoadAvDatabase();
+            }
+            g_nextAvUpdateAt = NowMs() + kAvUpdateIntervalMs;
+        }
         if (needScheduledScan) RunConfiguredScan(scheduledPath);
     }
 }
@@ -1087,6 +1608,8 @@ DWORD WINAPI ServiceWorkerThread(LPVOID) {
     if (g_state.serverUrls.empty()) g_state.serverUrls = SplitServerUrls(kDefaultServerUrls);
     g_state.serverUrl = g_state.serverUrls.front();
     g_state.productId = ReadEnvLong(L"TRAYAPP_PRODUCT_ID", 1);
+    LoadAvDatabase();
+    g_nextAvUpdateAt = NowMs() + kAvUpdateIntervalMs;
 
     RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", RPC_C_PROTSEQ_MAX_REQS_DEFAULT, (RPC_WSTR)kRpcEndpoint, nullptr);
     if (status == RPC_S_OK) status = RpcServerRegisterIf(ITrayService_v1_0_s_ifspec, nullptr, nullptr);
