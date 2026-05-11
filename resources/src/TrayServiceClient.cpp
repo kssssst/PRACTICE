@@ -296,6 +296,27 @@ int GetAvDatabaseInfoViaRPC(int* loaded, int* recordCount, wchar_t* releaseDate,
     return info.loaded ? 0 : 1;
 }
 
+int UpdateAvDatabaseViaRPC(wchar_t* message, int messageChars)
+{
+    if (InitializeRPCClient() != 0)
+    {
+        return -1;
+    }
+
+    wchar_t rpcMessage[512] = {};
+    __try
+    {
+        UpdateAvDatabase(rpcMessage);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -2;
+    }
+
+    CopyOut(message, messageChars, rpcMessage);
+    return 0;
+}
+
 namespace
 {
 int CopyScanResult(const ScanResult& result, int* scannedFiles, int* infectedFiles, wchar_t* threatName, int threatNameChars, wchar_t* objectPath, int objectPathChars, wchar_t* message, int messageChars)

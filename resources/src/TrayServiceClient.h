@@ -16,6 +16,7 @@ int LogoutViaRPC();
 int GetLicenseInfoViaRPC(int *hasLicense, int *blocked, wchar_t *expirationDate, int expirationChars, wchar_t *message, int messageChars);
 int ActivateProductViaRPC(const wchar_t *activationKey, int *hasLicense, int *blocked, wchar_t *expirationDate, int expirationChars, wchar_t *message, int messageChars);
 int GetAvDatabaseInfoViaRPC(int *loaded, int *recordCount, wchar_t *releaseDate, int releaseDateChars, wchar_t *message, int messageChars);
+int UpdateAvDatabaseViaRPC(wchar_t *message, int messageChars);
 int ScanFileViaRPC(const wchar_t *path, int *scannedFiles, int *infectedFiles, wchar_t *threatName, int threatNameChars, wchar_t *objectPath, int objectPathChars, wchar_t *message, int messageChars);
 int ScanDirectoryViaRPC(const wchar_t *path, int *scannedFiles, int *infectedFiles, wchar_t *threatName, int threatNameChars, wchar_t *objectPath, int objectPathChars, wchar_t *message, int messageChars);
 int ScanFixedDrivesViaRPC(int *scannedFiles, int *infectedFiles, wchar_t *threatName, int threatNameChars, wchar_t *objectPath, int objectPathChars, wchar_t *message, int messageChars);
