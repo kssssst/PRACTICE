@@ -153,6 +153,7 @@ bool ForceUpdateAvDatabaseFromServer();
 std::string WideToUtf8(const std::wstring& value);
 std::wstring Utf8ToWide(const std::string& value);
 bool ReadFileBytes(const std::wstring& path, std::vector<unsigned char>* bytes);
+std::vector<AvRecord> DefaultAvRecords();
 
 void CopyString(wchar_t* dest, size_t count, const std::wstring& value) {
     if (!dest || count == 0) return;
@@ -489,6 +490,23 @@ void BuildAhoTrieLocked() {
     }
 }
 
+bool LoadDefaultAvDatabaseInMemory() {
+    AvDatabase database;
+    database.releaseDate = L"default";
+    for (const AvRecord& record : DefaultAvRecords()) {
+        if (record.objectSignatureLength < 8 || !VerifyRecordSignature(record)) continue;
+        database.recordsByPrefix[record.objectSignaturePrefix].push_back(record);
+    }
+    database.loaded = !database.recordsByPrefix.empty();
+    if (!database.loaded) return false;
+
+    EnterCriticalSection(&g_avLock);
+    g_avDatabase = database;
+    BuildAhoTrieLocked();
+    LeaveCriticalSection(&g_avLock);
+    return true;
+}
+
 bool ParseDataRecord(const std::vector<unsigned char>& data, size_t* offset, const ManifestEntryInfo& entry, AvRecord* record) {
     if (!offset || !record) return false;
     const size_t start = *offset;
@@ -626,7 +644,9 @@ bool LoadAvDatabase() {
             // Restored successfully.
         } else {
             WriteDefaultAvDatabaseToDisk();
-            if (!LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &database, false)) return false;
+            if (!LoadAvDatabaseFromFiles(ManifestPath(root), DataPath(root), &database, false)) {
+                return LoadDefaultAvDatabaseInMemory();
+            }
         }
     }
 
@@ -742,8 +762,15 @@ bool ScanBufferWithDatabase(const std::wstring& path, const std::vector<unsigned
     LeaveCriticalSection(&g_avLock);
 
     if (!database.loaded || trie.empty()) {
-        MarkScanError(result, kErrorAvDatabaseNotLoaded, L"Антивирусные базы не загружены");
-        return false;
+        if (LoadDefaultAvDatabaseInMemory()) {
+            EnterCriticalSection(&g_avLock);
+            database = g_avDatabase;
+            trie = g_ahoTrie;
+            LeaveCriticalSection(&g_avLock);
+        } else {
+            MarkScanError(result, kErrorAvDatabaseNotLoaded, L"Антивирусные базы не загружены");
+            return false;
+        }
     }
 
     result->scannedFiles = 1;
@@ -1799,6 +1826,19 @@ error_status_t GetAvDatabaseInfo(AvDatabaseInfo* info) {
     CopyString(info->message, std::size(info->message),
                g_avDatabase.loaded ? L"Антивирусные базы загружены" : L"Антивирусные базы не загружены");
     LeaveCriticalSection(&g_avLock);
+    return RPC_S_OK;
+}
+
+error_status_t UpdateAvDatabase(wchar_t message[512]) {
+    if (!message) return RPC_X_NULL_REF_POINTER;
+    BackupAvDatabase();
+    if (ForceUpdateAvDatabaseFromServer() && LoadAvDatabase()) {
+        CopyString(message, 512, L"Антивирусные базы обновлены с сервера");
+    } else {
+        RestoreAvDatabaseBackup();
+        LoadAvDatabase();
+        CopyString(message, 512, L"Не удалось обновить базы с сервера, используется локальная база");
+    }
     return RPC_S_OK;
 }
 

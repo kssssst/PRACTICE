@@ -582,9 +582,17 @@ LRESULT CALLBACK WindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPAR
         }
 
         case kRefreshButtonId:
+        {
+            wchar_t updateMessage[512] = {};
+            UpdateAvDatabaseViaRPC(updateMessage, static_cast<int>(std::size(updateMessage)));
+            if (updateMessage[0] != L'\0')
+            {
+                SetWindowTextSafe(g_scanResultLabel, updateMessage);
+            }
             RefreshUiState();
             RefreshBackgroundScanOutcome();
             return 0;
+        }
 
         case kScanFileButtonId:
             RunPathScan(false);

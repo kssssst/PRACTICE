@@ -52,6 +52,7 @@ interface ITrayService
     error_status_t ActivateProduct([in, string] wchar_t *activationKey,
                                    [out] LicenseInfo *info);
     error_status_t GetAvDatabaseInfo([out] AvDatabaseInfo *info);
+    error_status_t UpdateAvDatabase([out, string] wchar_t message[512]);
     error_status_t ScanFile([in, string] wchar_t *path,
                             [out] ScanResult *result);
     error_status_t ScanDirectory([in, string] wchar_t *path,
