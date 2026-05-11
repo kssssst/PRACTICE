@@ -15,11 +15,19 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cwctype>
 #include <ctime>
+#include <deque>
+#include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
+#include <queue>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -42,14 +50,19 @@ constexpr long kErrorNotAuthenticated = 1001;
 constexpr long kErrorNoLicense = 2001;
 constexpr long kErrorNetwork = 3001;
 constexpr long kErrorBadResponse = 3002;
+constexpr long kErrorAvDatabaseNotLoaded = 4001;
+constexpr long kErrorScanFailed = 4002;
+constexpr size_t kHashSize = 32;
 
 SERVICE_STATUS g_serviceStatus = {};
 SERVICE_STATUS_HANDLE g_statusHandle = nullptr;
 HANDLE g_stopEvent = nullptr;
 HANDLE g_stateChangedEvent = nullptr;
 HANDLE g_backgroundThread = nullptr;
+HANDLE g_monitorThread = nullptr;
 CRITICAL_SECTION g_processesLock;
 CRITICAL_SECTION g_stateLock;
+CRITICAL_SECTION g_avLock;
 std::map<DWORD, HANDLE> g_sessionProcesses;
 
 struct HttpResponse {
@@ -79,6 +92,45 @@ struct ServiceState {
 
 ServiceState g_state;
 
+enum class ObjectType : unsigned char {
+    PeFile = 1,
+    Script = 2,
+};
+
+struct AvRecord {
+    unsigned long long objectSignaturePrefix = 0;
+    unsigned int objectSignatureLength = 0;
+    std::vector<unsigned char> objectSignature;
+    unsigned long long offsetBegin = 0;
+    unsigned long long offsetEnd = 0;
+    ObjectType objectType = ObjectType::PeFile;
+    std::vector<unsigned char> avRecordSignature;
+    std::wstring threatName;
+};
+
+struct AvDatabase {
+    std::map<unsigned long long, std::vector<AvRecord>> recordsByPrefix;
+    std::wstring releaseDate;
+    bool loaded = false;
+};
+
+struct AhoNode {
+    std::map<unsigned char, int> next;
+    int link = 0;
+    std::vector<unsigned long long> prefixes;
+};
+
+AvDatabase g_avDatabase;
+std::vector<AhoNode> g_ahoTrie;
+bool g_scheduleEnabled = false;
+DWORD g_scheduleIntervalMinutes = 60;
+std::wstring g_schedulePath;
+ULONGLONG g_nextScheduledScan = 0;
+bool g_monitorEnabled = false;
+std::wstring g_monitorPath;
+ScanResult g_lastBackgroundScanResult = {};
+ULONGLONG g_lastBackgroundScanAt = 0;
+
 ULONGLONG NowMs() {
     return GetTickCount64();
 }
@@ -86,6 +138,385 @@ ULONGLONG NowMs() {
 void CopyString(wchar_t* dest, size_t count, const std::wstring& value) {
     if (!dest || count == 0) return;
     wcsncpy_s(dest, count, value.c_str(), _TRUNCATE);
+}
+
+unsigned long long ReadLe64(const unsigned char* bytes) {
+    unsigned long long value = 0;
+    for (int i = 7; i >= 0; --i) {
+        value = (value << 8) | bytes[i];
+    }
+    return value;
+}
+
+std::vector<unsigned char> Le64Bytes(unsigned long long value) {
+    std::vector<unsigned char> bytes(8);
+    for (int i = 0; i < 8; ++i) bytes[static_cast<size_t>(i)] = static_cast<unsigned char>((value >> (i * 8)) & 0xff);
+    return bytes;
+}
+
+std::vector<unsigned char> PseudoSha256(const std::vector<unsigned char>& data) {
+    const unsigned long long seeds[4] = {
+        1469598103934665603ULL, 1099511628211ULL, 7809847782465536322ULL, 9650029242287828579ULL
+    };
+    std::vector<unsigned char> digest(kHashSize);
+    for (int lane = 0; lane < 4; ++lane) {
+        unsigned long long hash = seeds[lane];
+        for (unsigned char byte : data) {
+            hash ^= static_cast<unsigned long long>(byte) + static_cast<unsigned long long>(lane * 17);
+            hash *= 1099511628211ULL;
+            hash ^= hash >> 32;
+        }
+        for (int i = 0; i < 8; ++i) {
+            digest[static_cast<size_t>(lane * 8 + i)] = static_cast<unsigned char>((hash >> (i * 8)) & 0xff);
+        }
+    }
+    return digest;
+}
+
+std::vector<unsigned char> RecordBytesForSignature(const AvRecord& record) {
+    std::vector<unsigned char> bytes = Le64Bytes(record.objectSignaturePrefix);
+    for (int i = 0; i < 4; ++i) bytes.push_back(static_cast<unsigned char>((record.objectSignatureLength >> (i * 8)) & 0xff));
+    bytes.insert(bytes.end(), record.objectSignature.begin(), record.objectSignature.end());
+    std::vector<unsigned char> offsetBegin = Le64Bytes(record.offsetBegin);
+    std::vector<unsigned char> offsetEnd = Le64Bytes(record.offsetEnd);
+    bytes.insert(bytes.end(), offsetBegin.begin(), offsetBegin.end());
+    bytes.insert(bytes.end(), offsetEnd.begin(), offsetEnd.end());
+    bytes.push_back(static_cast<unsigned char>(record.objectType));
+    return bytes;
+}
+
+bool VerifyRecordSignature(const AvRecord& record) {
+    return record.avRecordSignature == PseudoSha256(RecordBytesForSignature(record));
+}
+
+AvRecord MakeRecord(const char* signature, ObjectType type, unsigned long long offsetBegin, unsigned long long offsetEnd, const wchar_t* name) {
+    const size_t length = strlen(signature);
+    std::vector<unsigned char> bytes(signature, signature + length);
+    AvRecord record;
+    record.objectSignaturePrefix = ReadLe64(bytes.data());
+    record.objectSignatureLength = static_cast<unsigned int>(bytes.size());
+    record.objectSignature = PseudoSha256(bytes);
+    record.offsetBegin = offsetBegin;
+    record.offsetEnd = offsetEnd;
+    record.objectType = type;
+    record.threatName = name;
+    record.avRecordSignature = PseudoSha256(RecordBytesForSignature(record));
+    return record;
+}
+
+void BuildAhoTrieLocked() {
+    g_ahoTrie.clear();
+    g_ahoTrie.push_back(AhoNode{});
+    for (const auto& bucket : g_avDatabase.recordsByPrefix) {
+        std::vector<unsigned char> prefix = Le64Bytes(bucket.first);
+        int node = 0;
+        for (unsigned char byte : prefix) {
+            auto it = g_ahoTrie[static_cast<size_t>(node)].next.find(byte);
+            if (it == g_ahoTrie[static_cast<size_t>(node)].next.end()) {
+                g_ahoTrie[static_cast<size_t>(node)].next[byte] = static_cast<int>(g_ahoTrie.size());
+                g_ahoTrie.push_back(AhoNode{});
+                node = static_cast<int>(g_ahoTrie.size() - 1);
+            } else {
+                node = it->second;
+            }
+        }
+        g_ahoTrie[static_cast<size_t>(node)].prefixes.push_back(bucket.first);
+    }
+
+    std::queue<int> queue;
+    for (const auto& edge : g_ahoTrie[0].next) queue.push(edge.second);
+    while (!queue.empty()) {
+        int vertex = queue.front();
+        queue.pop();
+        for (const auto& edge : g_ahoTrie[static_cast<size_t>(vertex)].next) {
+            unsigned char byte = edge.first;
+            int child = edge.second;
+            int link = g_ahoTrie[static_cast<size_t>(vertex)].link;
+            while (link != 0 && !g_ahoTrie[static_cast<size_t>(link)].next.count(byte)) {
+                link = g_ahoTrie[static_cast<size_t>(link)].link;
+            }
+            if (g_ahoTrie[static_cast<size_t>(link)].next.count(byte)) {
+                link = g_ahoTrie[static_cast<size_t>(link)].next[byte];
+            }
+            g_ahoTrie[static_cast<size_t>(child)].link = link;
+            auto& childPrefixes = g_ahoTrie[static_cast<size_t>(child)].prefixes;
+            const auto& linkPrefixes = g_ahoTrie[static_cast<size_t>(link)].prefixes;
+            childPrefixes.insert(childPrefixes.end(), linkPrefixes.begin(), linkPrefixes.end());
+            queue.push(child);
+        }
+    }
+}
+
+bool LoadAvDatabase() {
+    AvDatabase database;
+    database.releaseDate = L"2026-05-09";
+    std::vector<AvRecord> records = {
+        MakeRecord("MZ.ZIOVPO.EICAR.PE", ObjectType::PeFile, 0, 4096, L"Demo.PE.Ziovpo"),
+        MakeRecord("# ZIOVPO-TEST-SCRIPT", ObjectType::Script, 0, 1024 * 1024, L"Demo.Script.Ziovpo")
+    };
+
+    for (const auto& record : records) {
+        if (record.objectSignatureLength < 8 || !VerifyRecordSignature(record)) {
+            return false;
+        }
+        database.recordsByPrefix[record.objectSignaturePrefix].push_back(record);
+    }
+    database.loaded = true;
+
+    EnterCriticalSection(&g_avLock);
+    g_avDatabase = database;
+    BuildAhoTrieLocked();
+    LeaveCriticalSection(&g_avLock);
+    return true;
+}
+
+long AvRecordCountLocked() {
+    long count = 0;
+    for (const auto& bucket : g_avDatabase.recordsByPrefix) count += static_cast<long>(bucket.second.size());
+    return count;
+}
+
+std::wstring ToLower(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return static_cast<wchar_t>(towlower(ch));
+    });
+    return value;
+}
+
+std::wstring FileExtension(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    const size_t dot = path.find_last_of(L'.');
+    if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash)) return {};
+    return ToLower(path.substr(dot));
+}
+
+ObjectType DetectObjectType(const std::wstring& path, const std::vector<unsigned char>& data) {
+    const std::wstring ext = FileExtension(path);
+    if (ext == L".ps1" || ext == L".js" || ext == L".py" || ext == L".vbs" || ext == L".bat" || ext == L".cmd") {
+        return ObjectType::Script;
+    }
+    if (data.size() >= 2 && data[0] == 'M' && data[1] == 'Z') return ObjectType::PeFile;
+    if (ext == L".exe" || ext == L".dll" || ext == L".sys") return ObjectType::PeFile;
+    return ObjectType::Script;
+}
+
+bool ReadFileBytes(const std::wstring& path, std::vector<unsigned char>* bytes) {
+    if (!bytes) return false;
+    bytes->clear();
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return false;
+    stream.seekg(0, std::ios::end);
+    const std::streamoff size = stream.tellg();
+    if (size < 0 || size > 256LL * 1024LL * 1024LL) return false;
+    stream.seekg(0, std::ios::beg);
+    bytes->resize(static_cast<size_t>(size));
+    if (!bytes->empty()) stream.read(reinterpret_cast<char*>(bytes->data()), size);
+    return stream.good() || stream.eof();
+}
+
+struct ByteStream {
+    virtual ~ByteStream() = default;
+    virtual bool ReadAll(std::vector<unsigned char>* bytes) = 0;
+};
+
+struct FileByteStream final : ByteStream {
+    explicit FileByteStream(std::wstring value) : path(std::move(value)) {}
+    bool ReadAll(std::vector<unsigned char>* bytes) override { return ReadFileBytes(path, bytes); }
+    std::wstring path;
+};
+
+void MarkScanError(ScanResult* result, long errorCode, const std::wstring& message) {
+    if (!result) return;
+    result->errorCode = errorCode;
+    CopyString(result->message, std::size(result->message), message);
+}
+
+void MergeScanResult(ScanResult* target, const ScanResult& item) {
+    if (!target) return;
+    target->scannedFiles += item.scannedFiles;
+    target->infectedFiles += item.infectedFiles;
+    if (target->errorCode == 0 && item.errorCode != 0) target->errorCode = item.errorCode;
+    if (target->infectedFiles == item.infectedFiles && item.infectedFiles > 0 && target->objectPath[0] == L'\0') {
+        CopyString(target->objectPath, std::size(target->objectPath), item.objectPath);
+        CopyString(target->threatName, std::size(target->threatName), item.threatName);
+    }
+}
+
+void StoreBackgroundScanResult(const ScanResult& result, const std::wstring& source) {
+    EnterCriticalSection(&g_avLock);
+    g_lastBackgroundScanResult = result;
+    g_lastBackgroundScanAt = NowMs();
+    if (g_lastBackgroundScanResult.message[0] == L'\0') {
+        CopyString(g_lastBackgroundScanResult.message, std::size(g_lastBackgroundScanResult.message), source);
+    }
+    LeaveCriticalSection(&g_avLock);
+}
+
+bool ScanBufferWithDatabase(const std::wstring& path, const std::vector<unsigned char>& data, ScanResult* result) {
+    if (!result) return false;
+
+    EnterCriticalSection(&g_avLock);
+    const bool databaseLoaded = g_avDatabase.loaded;
+    LeaveCriticalSection(&g_avLock);
+    if (!databaseLoaded) {
+        bool hasLicense = false;
+        EnterCriticalSection(&g_stateLock);
+        hasLicense = !g_state.licenseTicketJson.empty() && !g_state.licenseBlocked;
+        LeaveCriticalSection(&g_stateLock);
+        if (hasLicense) LoadAvDatabase();
+    }
+
+    AvDatabase database;
+    std::vector<AhoNode> trie;
+    EnterCriticalSection(&g_avLock);
+    database = g_avDatabase;
+    trie = g_ahoTrie;
+    LeaveCriticalSection(&g_avLock);
+
+    if (!database.loaded || trie.empty()) {
+        MarkScanError(result, kErrorAvDatabaseNotLoaded, L"Антивирусные базы не загружены");
+        return false;
+    }
+
+    result->scannedFiles = 1;
+    const ObjectType objectType = DetectObjectType(path, data);
+    int node = 0;
+    for (size_t pos = 0; pos < data.size(); ++pos) {
+        const unsigned char byte = data[pos];
+        while (node != 0 && !trie[static_cast<size_t>(node)].next.count(byte)) {
+            node = trie[static_cast<size_t>(node)].link;
+        }
+        auto nextIt = trie[static_cast<size_t>(node)].next.find(byte);
+        if (nextIt != trie[static_cast<size_t>(node)].next.end()) node = nextIt->second;
+
+        for (unsigned long long prefix : trie[static_cast<size_t>(node)].prefixes) {
+            if (pos + 1 < 8) continue;
+            const unsigned long long offset = static_cast<unsigned long long>(pos + 1 - 8);
+            auto bucketIt = database.recordsByPrefix.find(prefix);
+            if (bucketIt == database.recordsByPrefix.end()) continue;
+
+            for (const AvRecord& record : bucketIt->second) {
+                if (record.objectType != objectType) continue;
+                if (offset < record.offsetBegin || offset > record.offsetEnd) continue;
+                if (record.objectSignatureLength < 8) continue;
+                const size_t length = static_cast<size_t>(record.objectSignatureLength);
+                if (offset + length > data.size()) continue;
+
+                std::vector<unsigned char> signatureBytes(data.begin() + static_cast<ptrdiff_t>(offset),
+                                                          data.begin() + static_cast<ptrdiff_t>(offset + length));
+                if (PseudoSha256(signatureBytes) == record.objectSignature) {
+                    result->infectedFiles = 1;
+                    result->errorCode = 0;
+                    CopyString(result->objectPath, std::size(result->objectPath), path);
+                    CopyString(result->threatName, std::size(result->threatName), record.threatName);
+                    CopyString(result->message, std::size(result->message), L"Обнаружен вредоносный объект");
+                    return true;
+                }
+            }
+        }
+    }
+
+    CopyString(result->message, std::size(result->message), L"Угрозы не обнаружены");
+    return false;
+}
+
+bool ScanSingleFile(const std::wstring& path, ScanResult* result) {
+    if (!result) return false;
+    ZeroMemory(result, sizeof(*result));
+    std::vector<unsigned char> bytes;
+    FileByteStream stream(path);
+    if (!stream.ReadAll(&bytes)) {
+        MarkScanError(result, kErrorScanFailed, L"Не удалось прочитать файл");
+        return false;
+    }
+    return ScanBufferWithDatabase(path, bytes, result);
+}
+
+void ScanDirectoryRecursive(const std::wstring& path, ScanResult* result) {
+    if (!result) return;
+    std::wstring mask = path;
+    if (!mask.empty() && mask.back() != L'\\' && mask.back() != L'/') mask += L"\\";
+    mask += L"*";
+
+    WIN32_FIND_DATAW data = {};
+    HANDLE findHandle = FindFirstFileW(mask.c_str(), &data);
+    if (findHandle == INVALID_HANDLE_VALUE) {
+        MarkScanError(result, kErrorScanFailed, L"Не удалось открыть директорию");
+        return;
+    }
+
+    do {
+        if (wcscmp(data.cFileName, L".") == 0 || wcscmp(data.cFileName, L"..") == 0) continue;
+        std::wstring child = path;
+        if (!child.empty() && child.back() != L'\\' && child.back() != L'/') child += L"\\";
+        child += data.cFileName;
+
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            ScanDirectoryRecursive(child, result);
+            if (result->infectedFiles > 0) break;
+        } else {
+            ScanResult item = {};
+            ScanSingleFile(child, &item);
+            MergeScanResult(result, item);
+            if (item.infectedFiles > 0) break;
+        }
+    } while (FindNextFileW(findHandle, &data));
+
+    FindClose(findHandle);
+    if (result->message[0] == L'\0') {
+        CopyString(result->message, std::size(result->message),
+                   result->infectedFiles > 0 ? L"Обнаружен вредоносный объект" : L"Угрозы не обнаружены");
+    }
+}
+
+void RunConfiguredScan(const std::wstring& path) {
+    ScanResult result = {};
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return;
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+        ScanDirectoryRecursive(path, &result);
+    } else {
+        ScanSingleFile(path, &result);
+    }
+    StoreBackgroundScanResult(result, path);
+}
+
+DWORD WINAPI MonitorThreadProc(LPVOID) {
+    for (;;) {
+        if (WaitForSingleObject(g_stopEvent, 1000) == WAIT_OBJECT_0) return 0;
+
+        std::wstring path;
+        bool enabled = false;
+        EnterCriticalSection(&g_avLock);
+        enabled = g_monitorEnabled;
+        path = g_monitorPath;
+        LeaveCriticalSection(&g_avLock);
+        if (!enabled || path.empty()) continue;
+
+        HANDLE dir = CreateFileW(path.c_str(), FILE_LIST_DIRECTORY,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 nullptr, OPEN_EXISTING,
+                                 FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (dir == INVALID_HANDLE_VALUE) {
+            Sleep(3000);
+            continue;
+        }
+
+        BYTE buffer[4096] = {};
+        DWORD bytesReturned = 0;
+        BOOL ok = ReadDirectoryChangesW(dir, buffer, sizeof(buffer), TRUE,
+                                        FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE,
+                                        &bytesReturned, nullptr, nullptr);
+        if (ok && bytesReturned >= sizeof(FILE_NOTIFY_INFORMATION)) {
+            auto* info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(buffer);
+            std::wstring fileName(info->FileName, info->FileNameLength / sizeof(wchar_t));
+            std::wstring changedPath = path;
+            if (!changedPath.empty() && changedPath.back() != L'\\' && changedPath.back() != L'/') changedPath += L"\\";
+            changedPath += fileName;
+            if (!(GetFileAttributesW(changedPath.c_str()) & FILE_ATTRIBUTE_DIRECTORY)) RunConfiguredScan(changedPath);
+        }
+        CloseHandle(dir);
+    }
 }
 
 std::string WideToUtf8(const std::wstring& value) {
@@ -478,6 +909,7 @@ bool RefreshTokens() {
         g_state.lastAuthError = L"Сессия истекла. Войдите заново.";
     }
     LeaveCriticalSection(&g_stateLock);
+    if (ok) LoadAvDatabase();
     SetEvent(g_stateChangedEvent);
     return ok;
 }
@@ -499,6 +931,7 @@ bool CheckLicense() {
     const bool ok = response.status == 200 && StoreTicketResponseLocked(response.body);
     if (!ok) ClearLicenseLocked(ResponseErrorMessage(response, L"Активная лицензия не найдена"));
     LeaveCriticalSection(&g_stateLock);
+    if (ok) LoadAvDatabase();
     SetEvent(g_stateChangedEvent);
     return ok;
 }
@@ -517,6 +950,13 @@ DWORD CalculateBackgroundWaitMs() {
     }
     if (g_state.refreshToken.empty() && g_state.licenseTicketJson.empty()) waitMs = INFINITE;
     LeaveCriticalSection(&g_stateLock);
+    EnterCriticalSection(&g_avLock);
+    if (g_scheduleEnabled) {
+        waitMs = static_cast<DWORD>(g_nextScheduledScan > NowMs()
+            ? std::min<ULONGLONG>(g_nextScheduledScan - NowMs(), waitMs == INFINITE ? g_nextScheduledScan - NowMs() : waitMs)
+            : 0);
+    }
+    LeaveCriticalSection(&g_avLock);
     return waitMs;
 }
 
@@ -529,6 +969,8 @@ DWORD WINAPI BackgroundWorkerThread(LPVOID) {
 
         bool needTokenRefresh = false;
         bool needLicenseRefresh = false;
+        bool needScheduledScan = false;
+        std::wstring scheduledPath;
         EnterCriticalSection(&g_stateLock);
         needTokenRefresh = !g_state.refreshToken.empty() &&
                            ((g_state.accessExpiry > 0 && g_state.accessExpiry <= NowMs() + 60000) ||
@@ -536,8 +978,17 @@ DWORD WINAPI BackgroundWorkerThread(LPVOID) {
         needLicenseRefresh = !g_state.licenseTicketJson.empty() && g_state.licenseRefreshAt <= NowMs();
         LeaveCriticalSection(&g_stateLock);
 
+        EnterCriticalSection(&g_avLock);
+        if (g_scheduleEnabled && !g_schedulePath.empty() && g_nextScheduledScan <= NowMs()) {
+            needScheduledScan = true;
+            scheduledPath = g_schedulePath;
+            g_nextScheduledScan = NowMs() + static_cast<ULONGLONG>(std::max<DWORD>(g_scheduleIntervalMinutes, 1)) * 60ULL * 1000ULL;
+        }
+        LeaveCriticalSection(&g_avLock);
+
         if (needTokenRefresh) RefreshTokens();
         if (needLicenseRefresh) CheckLicense();
+        if (needScheduledScan) RunConfiguredScan(scheduledPath);
     }
 }
 
@@ -559,7 +1010,7 @@ void UpdateServiceState(DWORD state, DWORD win32ExitCode = NO_ERROR) {
     g_serviceStatus.dwCurrentState = state;
     g_serviceStatus.dwWin32ExitCode = win32ExitCode;
     g_serviceStatus.dwWaitHint = (state == SERVICE_RUNNING || state == SERVICE_STOPPED) ? 0 : 5000;
-    g_serviceStatus.dwControlsAccepted = (state == SERVICE_RUNNING) ? SERVICE_ACCEPT_SESSIONCHANGE : 0;
+    g_serviceStatus.dwControlsAccepted = (state == SERVICE_RUNNING) ? (SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SESSIONCHANGE) : 0;
     if (g_statusHandle) SetServiceStatus(g_statusHandle, &g_serviceStatus);
 }
 
@@ -646,6 +1097,7 @@ DWORD WINAPI ServiceWorkerThread(LPVOID) {
     }
 
     g_backgroundThread = CreateThread(nullptr, 0, BackgroundWorkerThread, nullptr, 0, nullptr);
+    g_monitorThread = CreateThread(nullptr, 0, MonitorThreadProc, nullptr, 0, nullptr);
     UpdateServiceState(SERVICE_RUNNING);
     LaunchAppInExistingSessions();
     WaitForSingleObject(g_stopEvent, INFINITE);
@@ -658,6 +1110,11 @@ DWORD WINAPI ServiceWorkerThread(LPVOID) {
         WaitForSingleObject(g_backgroundThread, 5000);
         CloseHandle(g_backgroundThread);
         g_backgroundThread = nullptr;
+    }
+    if (g_monitorThread) {
+        WaitForSingleObject(g_monitorThread, 5000);
+        CloseHandle(g_monitorThread);
+        g_monitorThread = nullptr;
     }
     TerminateAllApps();
     return 0;
@@ -792,8 +1249,93 @@ error_status_t ActivateProduct(wchar_t* activationKey, LicenseInfo* info) {
         SetEvent(g_stateChangedEvent);
         return RPC_S_OK;
     }
+    LoadAvDatabase();
     SetEvent(g_stateChangedEvent);
     return GetLicenseInfo(info);
+}
+
+error_status_t GetAvDatabaseInfo(AvDatabaseInfo* info) {
+    if (!info) return RPC_X_NULL_REF_POINTER;
+    ZeroMemory(info, sizeof(*info));
+    EnterCriticalSection(&g_avLock);
+    info->loaded = g_avDatabase.loaded ? 1 : 0;
+    info->recordCount = AvRecordCountLocked();
+    CopyString(info->releaseDate, std::size(info->releaseDate), g_avDatabase.releaseDate);
+    CopyString(info->message, std::size(info->message),
+               g_avDatabase.loaded ? L"Антивирусные базы загружены" : L"Антивирусные базы не загружены");
+    LeaveCriticalSection(&g_avLock);
+    return RPC_S_OK;
+}
+
+error_status_t ScanFile(wchar_t* path, ScanResult* result) {
+    if (!path || !result) return RPC_X_NULL_REF_POINTER;
+    ScanSingleFile(path, result);
+    return RPC_S_OK;
+}
+
+error_status_t ScanDirectory(wchar_t* path, ScanResult* result) {
+    if (!path || !result) return RPC_X_NULL_REF_POINTER;
+    ZeroMemory(result, sizeof(*result));
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        MarkScanError(result, kErrorScanFailed, L"Директория не найдена");
+        return RPC_S_OK;
+    }
+    ScanDirectoryRecursive(path, result);
+    return RPC_S_OK;
+}
+
+error_status_t ScanFixedDrives(ScanResult* result) {
+    if (!result) return RPC_X_NULL_REF_POINTER;
+    ZeroMemory(result, sizeof(*result));
+    DWORD mask = GetLogicalDrives();
+    for (wchar_t letter = L'A'; letter <= L'Z'; ++letter) {
+        if ((mask & (1u << (letter - L'A'))) == 0) continue;
+        wchar_t root[] = { letter, L':', L'\\', L'\0' };
+        if (GetDriveTypeW(root) != DRIVE_FIXED) continue;
+        ScanDirectoryRecursive(root, result);
+        if (result->infectedFiles > 0) break;
+    }
+    if (result->message[0] == L'\0') {
+        CopyString(result->message, std::size(result->message), L"Угрозы не обнаружены");
+    }
+    return RPC_S_OK;
+}
+
+error_status_t ConfigureScheduledScan(long enabled, long intervalMinutes, wchar_t* path, wchar_t message[512]) {
+    if (!path || !message) return RPC_X_NULL_REF_POINTER;
+    EnterCriticalSection(&g_avLock);
+    g_scheduleEnabled = enabled != 0;
+    g_scheduleIntervalMinutes = static_cast<DWORD>(std::max<long>(intervalMinutes, 1));
+    g_schedulePath = path;
+    g_nextScheduledScan = NowMs() + static_cast<ULONGLONG>(g_scheduleIntervalMinutes) * 60ULL * 1000ULL;
+    LeaveCriticalSection(&g_avLock);
+    SetEvent(g_stateChangedEvent);
+    CopyString(message, 512, g_scheduleEnabled ? L"Сканирование по расписанию включено" : L"Сканирование по расписанию выключено");
+    return RPC_S_OK;
+}
+
+error_status_t ConfigureDirectoryMonitoring(long enabled, wchar_t* path, wchar_t message[512]) {
+    if (!path || !message) return RPC_X_NULL_REF_POINTER;
+    EnterCriticalSection(&g_avLock);
+    g_monitorEnabled = enabled != 0;
+    g_monitorPath = path;
+    LeaveCriticalSection(&g_avLock);
+    CopyString(message, 512, g_monitorEnabled ? L"Мониторинг директории включен" : L"Мониторинг директории выключен");
+    return RPC_S_OK;
+}
+
+error_status_t GetLastBackgroundScanResult(ScanResult* result) {
+    if (!result) return RPC_X_NULL_REF_POINTER;
+    ZeroMemory(result, sizeof(*result));
+    EnterCriticalSection(&g_avLock);
+    if (g_lastBackgroundScanAt != 0) {
+        *result = g_lastBackgroundScanResult;
+    } else {
+        CopyString(result->message, std::size(result->message), L"Фоновых проверок еще не было");
+    }
+    LeaveCriticalSection(&g_avLock);
+    return RPC_S_OK;
 }
 }
 
@@ -801,6 +1343,12 @@ void* __RPC_USER MIDL_user_allocate(size_t s) { return malloc(s); }
 void __RPC_USER MIDL_user_free(void* p) { free(p); }
 
 DWORD WINAPI ServiceControlHandlerEx(DWORD ctrl, DWORD evtType, LPVOID evtData, LPVOID) {
+    if (ctrl == SERVICE_CONTROL_STOP) {
+        UpdateServiceState(SERVICE_STOP_PENDING);
+        if (g_stopEvent) SetEvent(g_stopEvent);
+        return NO_ERROR;
+    }
+
     if (ctrl == SERVICE_CONTROL_SESSIONCHANGE && (evtType == WTS_SESSION_LOGON || evtType == WTS_CONSOLE_CONNECT || evtType == WTS_REMOTE_CONNECT)) {
         auto* notif = static_cast<WTSSESSION_NOTIFICATION*>(evtData);
         if (notif && notif->dwSessionId != 0) LaunchAppInSession(notif->dwSessionId);
@@ -842,8 +1390,10 @@ VOID WINAPI ServiceMain(DWORD, LPWSTR*) {
 int wmain() {
     InitializeCriticalSection(&g_processesLock);
     InitializeCriticalSection(&g_stateLock);
+    InitializeCriticalSection(&g_avLock);
     SERVICE_TABLE_ENTRYW table[] = { { const_cast<LPWSTR>(kServiceName), ServiceMain }, { nullptr, nullptr } };
     StartServiceCtrlDispatcherW(table);
+    DeleteCriticalSection(&g_avLock);
     DeleteCriticalSection(&g_stateLock);
     DeleteCriticalSection(&g_processesLock);
     return 0;

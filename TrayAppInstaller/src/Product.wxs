@@ -1,0 +1,35 @@
+<Wix
+  xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package
+    Name="TrayApp"
+    Manufacturer="TrayApp"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="F7B6E10C-75F2-4A04-9F73-CF2175A62B8A"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Compressed="yes">
+
+    <SummaryInformation Description="TrayApp application and Windows service installer" Manufacturer="TrayApp" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of TrayApp is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.InstallerSourceDir)License.rtf" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="TrayApp" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="TrayApp" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="TrayApp" Level="1">
+      <ComponentGroupRef Id="AppPayload" />
+    </Feature>
+  </Package>
+</Wix>

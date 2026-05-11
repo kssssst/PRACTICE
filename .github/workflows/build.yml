@@ -5,6 +5,11 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: ARM64
+  PRODUCT_VERSION: 1.0.${{ github.run_number }}
+
 jobs:
   build:
     runs-on: windows-11-arm
@@ -14,12 +19,12 @@ jobs:
       
     - name: Configure CMake
       run: |
-        cmake -S . -B build -G "Visual Studio 17 2022" -A ARM64
+        cmake -S . -B build -G "Visual Studio 17 2022" -A $env:BUILD_PLATFORM
       shell: powershell
     
     - name: Build
       run: |
-        cmake --build build --config Release
+        cmake --build build --config $env:BUILD_CONFIGURATION
       shell: powershell
       
     - name: Verify generated files and binaries
@@ -28,7 +33,7 @@ jobs:
         $requiredFiles = @(
           'build\rpc\TrayService.h',
           'build\rpc\TrayService_c.c',
-          'build\rpc\TrayService_s.c',
+          'build\service\rpc\TrayService_s.c',
           'build\TrayApp.exe',
           'build\TrayService.exe'
         )
@@ -44,20 +49,57 @@ jobs:
         Get-Item build\TrayApp.exe, build\TrayService.exe | Select-Object FullName, Length
       shell: powershell
 
-    - name: Create TrayApp package
+    - name: Prepare installer payload
       if: success()
       run: |
-        New-Item -ItemType Directory -Force -Path TrayApp | Out-Null
-        Copy-Item build\TrayApp.exe TrayApp\
-        Copy-Item build\TrayService.exe TrayApp\
-        Copy-Item install_service.bat TrayApp\
-        Copy-Item uninstall_service.bat TrayApp\
+        .\TrayAppInstaller\scripts\Prepare-Payload.ps1 `
+          -AppBuildBin .\build `
+          -PayloadDir .\TrayAppInstaller\src\payload
+
+        .\TrayAppInstaller\scripts\Generate-WixPayload.ps1 `
+          -PayloadDir .\TrayAppInstaller\src\payload `
+          -OutputPath .\TrayAppInstaller\src\Payload.generated.wxs
       shell: powershell
-      
-    - name: Upload TrayApp package
+
+    - name: Build TrayApp installer
+      if: success()
+      run: |
+        dotnet build .\TrayAppInstaller\src\TrayAppInstaller.wixproj `
+          -c $env:BUILD_CONFIGURATION `
+          -p:ProductVersion=$env:PRODUCT_VERSION `
+          -p:PayloadDir="$PWD\TrayAppInstaller\src\payload"
+      shell: powershell
+
+    - name: Verify installer
+      if: success()
+      run: |
+        $installer = Get-Item ".\TrayAppInstaller\src\bin\$env:BUILD_CONFIGURATION\TrayAppSetup.msi"
+        if (-not $installer) {
+          Write-Error "TrayAppSetup.msi was not produced."
+          exit 1
+        }
+
+        $payloadFiles = Get-ChildItem .\TrayAppInstaller\src\payload -File -Recurse
+        $requiredPayload = @('TrayApp.exe', 'TrayService.exe')
+        foreach ($file in $requiredPayload) {
+          if (-not ($payloadFiles | Where-Object { $_.Name -ieq $file })) {
+            Write-Error "Installer payload is missing required file: $file"
+            exit 1
+          }
+        }
+
+        Write-Host "Built installer:"
+        $installer | Select-Object FullName, Length
+        Write-Host "Payload files included in installer:"
+        $payloadFiles | Select-Object FullName, Length
+      shell: powershell
+
+    - name: Upload TrayApp installer
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: TrayApp
-        path: TrayApp/
+        name: TrayAppInstaller-ARM64
+
+
+        path: TrayAppInstaller/src/bin/${{ env.BUILD_CONFIGURATION }}/TrayAppSetup.msi
         retention-days: 90
