@@ -226,6 +226,35 @@ bool VerifyRecordSignature(const AvRecord& record) {
     return record.avRecordSignature == PseudoSha256(RecordBytesForSignature(record));
 }
 
+bool SameAvRecord(const AvRecord& left, const AvRecord& right) {
+    return left.objectSignaturePrefix == right.objectSignaturePrefix &&
+           left.objectSignatureLength == right.objectSignatureLength &&
+           left.objectSignature == right.objectSignature &&
+           left.offsetBegin == right.offsetBegin &&
+           left.offsetEnd == right.offsetEnd &&
+           left.objectType == right.objectType &&
+           left.threatName == right.threatName;
+}
+
+void AddRecordToDatabase(AvDatabase* database, const AvRecord& record) {
+    if (!database || record.objectSignatureLength < 8) return;
+    auto& bucket = database->recordsByPrefix[record.objectSignaturePrefix];
+    const auto duplicate = std::find_if(bucket.begin(), bucket.end(), [&](const AvRecord& existing) {
+        return SameAvRecord(existing, record);
+    });
+    if (duplicate == bucket.end()) bucket.push_back(record);
+}
+
+void MergeDefaultAvRecords(AvDatabase* database) {
+    if (!database) return;
+    for (const AvRecord& record : DefaultAvRecords()) {
+        if (record.objectSignatureLength < 8 || !VerifyRecordSignature(record)) continue;
+        AddRecordToDatabase(database, record);
+    }
+    database->loaded = !database->recordsByPrefix.empty();
+    if (database->releaseDate.empty()) database->releaseDate = L"default";
+}
+
 AvRecord MakeRecord(const char* signature, ObjectType type, unsigned long long offsetBegin, unsigned long long offsetEnd, const wchar_t* name) {
     const size_t length = strlen(signature);
     std::vector<unsigned char> bytes(signature, signature + length);
@@ -239,6 +268,29 @@ AvRecord MakeRecord(const char* signature, ObjectType type, unsigned long long o
     record.threatName = name;
     record.avRecordSignature = PseudoSha256(RecordBytesForSignature(record));
     return record;
+}
+
+AvRecord MakeRecord(const std::vector<unsigned char>& bytes, ObjectType type, unsigned long long offsetBegin, unsigned long long offsetEnd, const wchar_t* name) {
+    AvRecord record;
+    if (bytes.size() < 8) return record;
+    record.objectSignaturePrefix = ReadLe64(bytes.data());
+    record.objectSignatureLength = static_cast<unsigned int>(bytes.size());
+    record.objectSignature = PseudoSha256(bytes);
+    record.offsetBegin = offsetBegin;
+    record.offsetEnd = offsetEnd;
+    record.objectType = type;
+    record.threatName = name;
+    record.avRecordSignature = PseudoSha256(RecordBytesForSignature(record));
+    return record;
+}
+
+std::vector<unsigned char> Utf16LeBytes(const char* text) {
+    std::vector<unsigned char> bytes;
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p; ++p) {
+        bytes.push_back(*p);
+        bytes.push_back(0);
+    }
+    return bytes;
 }
 
 void WriteBe16(std::vector<unsigned char>* out, unsigned int value) {
@@ -330,9 +382,16 @@ bool WriteFileBytes(const std::wstring& path, const std::vector<unsigned char>& 
 }
 
 std::vector<AvRecord> DefaultAvRecords() {
+    const char* eicar = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
     return {
         MakeRecord("MZ.ZIOVPO.EICAR.PE", ObjectType::PeFile, 0, 4096, L"Demo.PE.Ziovpo"),
-        MakeRecord("# ZIOVPO-TEST-SCRIPT", ObjectType::Script, 0, 1024 * 1024, L"Demo.Script.Ziovpo")
+        MakeRecord("MZ.ZIOVPO.EICAR.PE", ObjectType::Script, 0, 4096, L"Demo.PE.Ziovpo.BinarySample"),
+        MakeRecord(Utf16LeBytes("MZ.ZIOVPO.EICAR.PE"), ObjectType::PeFile, 0, 4096, L"Demo.PE.Ziovpo.UTF16"),
+        MakeRecord(Utf16LeBytes("MZ.ZIOVPO.EICAR.PE"), ObjectType::Script, 0, 4096, L"Demo.PE.Ziovpo.UTF16.BinarySample"),
+        MakeRecord("# ZIOVPO-TEST-SCRIPT", ObjectType::Script, 0, 1024 * 1024, L"Demo.Script.Ziovpo"),
+        MakeRecord(Utf16LeBytes("# ZIOVPO-TEST-SCRIPT"), ObjectType::Script, 0, 1024 * 1024, L"Demo.Script.Ziovpo.UTF16"),
+        MakeRecord(eicar, ObjectType::Script, 0, 1024 * 1024, L"EICAR.Test.File"),
+        MakeRecord(Utf16LeBytes(eicar), ObjectType::Script, 0, 1024 * 1024, L"EICAR.Test.File.UTF16")
     };
 }
 
@@ -493,11 +552,7 @@ void BuildAhoTrieLocked() {
 bool LoadDefaultAvDatabaseInMemory() {
     AvDatabase database;
     database.releaseDate = L"default";
-    for (const AvRecord& record : DefaultAvRecords()) {
-        if (record.objectSignatureLength < 8 || !VerifyRecordSignature(record)) continue;
-        database.recordsByPrefix[record.objectSignaturePrefix].push_back(record);
-    }
-    database.loaded = !database.recordsByPrefix.empty();
+    MergeDefaultAvRecords(&database);
     if (!database.loaded) return false;
 
     EnterCriticalSection(&g_avLock);
@@ -623,7 +678,7 @@ bool LoadAvDatabaseFromFiles(const std::wstring& manifestPath, const std::wstrin
             if (!entry.recordSignature.empty()) ForceUpdateAvDatabaseFromServer();
             continue;
         }
-        database->recordsByPrefix[record.objectSignaturePrefix].push_back(record);
+        AddRecordToDatabase(database, record);
     }
     database->loaded = !database->recordsByPrefix.empty();
     return database->loaded;
@@ -651,6 +706,7 @@ bool LoadAvDatabase() {
     }
 
     EnterCriticalSection(&g_avLock);
+    MergeDefaultAvRecords(&database);
     g_avDatabase = database;
     BuildAhoTrieLocked();
     LeaveCriticalSection(&g_avLock);
