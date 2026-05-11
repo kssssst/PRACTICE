@@ -47,7 +47,7 @@ namespace {
 constexpr wchar_t kServiceName[] = L"TrayAppService";
 constexpr wchar_t kRpcEndpoint[] = L"TrayServiceEndpoint";
 constexpr wchar_t kAppName[] = L"TrayApp.exe";
-constexpr wchar_t kDefaultServerUrls[] = L"https://10.211.55.2:8443;https://10.211.55.1:8443;https://localhost:8443";
+constexpr wchar_t kDefaultServerUrls[] = L"https://10.211.55.2:8443;https://10.211.55.1:8443;https://10.0.2.2:8443;https://host.docker.internal:8443;https://localhost:8443";
 constexpr long kErrorNotAuthenticated = 1001;
 constexpr long kErrorNoLicense = 2001;
 constexpr long kErrorNetwork = 3001;
@@ -1093,6 +1093,47 @@ std::vector<std::wstring> SplitServerUrls(const std::wstring& value) {
     return urls;
 }
 
+void AddUniqueServerUrl(std::vector<std::wstring>* urls, const std::wstring& url) {
+    if (!urls || url.empty()) return;
+    if (std::find(urls->begin(), urls->end(), url) == urls->end()) urls->push_back(url);
+}
+
+std::vector<std::wstring> DetectGatewayServerUrls() {
+    std::vector<std::wstring> urls;
+    ULONG size = 15000;
+    std::vector<BYTE> bytes(size);
+    IP_ADAPTER_ADDRESSES* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(bytes.data());
+    ULONG result = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                                        nullptr, adapters, &size);
+    if (result == ERROR_BUFFER_OVERFLOW) {
+        bytes.resize(size);
+        adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(bytes.data());
+        result = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                                      nullptr, adapters, &size);
+    }
+    if (result != NO_ERROR) return urls;
+
+    for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        for (auto* gateway = adapter->FirstGatewayAddress; gateway != nullptr; gateway = gateway->Next) {
+            if (!gateway->Address.lpSockaddr || gateway->Address.lpSockaddr->sa_family != AF_INET) continue;
+            auto* address = reinterpret_cast<sockaddr_in*>(gateway->Address.lpSockaddr);
+            wchar_t host[INET_ADDRSTRLEN] = {};
+            if (InetNtopW(AF_INET, &address->sin_addr, host, static_cast<DWORD>(std::size(host)))) {
+                AddUniqueServerUrl(&urls, L"https://" + std::wstring(host) + L":8443");
+            }
+        }
+    }
+    return urls;
+}
+
+std::vector<std::wstring> BuildServerUrlList(const std::wstring& configuredUrls) {
+    std::vector<std::wstring> urls = SplitServerUrls(configuredUrls);
+    for (const auto& url : DetectGatewayServerUrls()) AddUniqueServerUrl(&urls, url);
+    for (const auto& url : SplitServerUrls(kDefaultServerUrls)) AddUniqueServerUrl(&urls, url);
+    return urls;
+}
+
 std::wstring JoinServerUrls(const std::vector<std::wstring>& urls) {
     std::wstring result;
     for (const auto& url : urls) {
@@ -1643,8 +1684,8 @@ void TerminateAllApps() {
 DWORD WINAPI ServiceWorkerThread(LPVOID) {
     std::wstring configuredUrls = ReadEnvString(L"TRAYAPP_SERVER_URLS", L"");
     if (configuredUrls.empty()) configuredUrls = ReadEnvString(L"TRAYAPP_SERVER_URL", kDefaultServerUrls);
-    g_state.serverUrls = SplitServerUrls(configuredUrls);
-    if (g_state.serverUrls.empty()) g_state.serverUrls = SplitServerUrls(kDefaultServerUrls);
+    g_state.serverUrls = BuildServerUrlList(configuredUrls);
+    if (g_state.serverUrls.empty()) g_state.serverUrls = BuildServerUrlList(kDefaultServerUrls);
     g_state.serverUrl = g_state.serverUrls.front();
     g_state.productId = ReadEnvLong(L"TRAYAPP_PRODUCT_ID", 1);
     LoadAvDatabase();
